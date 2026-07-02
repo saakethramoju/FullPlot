@@ -298,7 +298,7 @@ def _create_group(
 
     map_group.attrs["kind"] = "map"
     map_group.attrs["name"] = group
-    map_group.attrs["map_format"] = "fullflow-map-v3"
+    map_group.attrs["map_format"] = "rectangular-grid-map-v1"
     map_group.attrs["created_utc"] = _datetime.datetime.now(_datetime.UTC).isoformat()
     map_group.attrs["axis_order"] = json.dumps([axis.name for axis in axes])
     map_group.attrs["output_names"] = json.dumps(output_names)
@@ -358,7 +358,7 @@ def _check_existing_group(
     shape = _shape_from_axes(axes)
 
     if "axes" not in map_group or not isinstance(map_group["axes"], h5py.Group):
-        raise MapGenerationError("Existing map group is not a fullflow-map-v3 group and cannot be resumed.")
+        raise MapGenerationError("Existing map group is missing required group 'axes' and cannot be resumed.")
 
     if "outputs" not in map_group or not isinstance(map_group["outputs"], h5py.Group):
         raise MapGenerationError("Existing map group is missing required group 'outputs'.")
@@ -503,10 +503,14 @@ def generate_map(
     flush_every: int = 25,
     raise_errors: bool = False,
 ) -> str:
-    """Generate a FullPlot HDF5 map compatible with FullFlow Map.from_hdf5().
+    """Generate a rectangular-grid HDF5 map.
 
-    The generated file can be loaded by FullFlow ``Map.from_hdf5`` or any reader that follows the same HDF5 map layout. ``generate_map`` evaluates a Python function on every
-    combination of axis values and writes one HDF5 dataset per scalar output.
+    The generated file stores one-dimensional axis datasets under ``/axes`` and
+    rectangular output datasets under ``/outputs``. It can be loaded by any
+    reader that understands that simple layout, including FullFlow
+    ``Map.from_hdf5(...)``. ``generate_map`` evaluates a Python function on
+    every combination of axis values and writes one HDF5 dataset per scalar
+    output.
 
     Naming rules
     ------------
@@ -609,8 +613,9 @@ def generate_map(
     group_path = safe_group_name(group)
 
     with h5py.File(filename, "a") as file:
-        file.attrs["fullflow_format"] = "fullflow-simple-hdf5"
-        file.attrs["fullflow_schema_version"] = 3
+        file.attrs["fullplot_format"] = "fullplot-hdf5"
+        file.attrs["fullplot_schema_version"] = 1
+        file.attrs["map_schema"] = "rectangular-grid-map-v1"
         if "created_utc" not in file.attrs:
             file.attrs["created_utc"] = _datetime.datetime.now(_datetime.UTC).isoformat()
         file.attrs["updated_utc"] = _datetime.datetime.now(_datetime.UTC).isoformat()

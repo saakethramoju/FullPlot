@@ -70,7 +70,7 @@ fplt.plot(command)
 
 ## Map generation
 
-FullPlot can generate rectangular HDF5 maps that another package, including FullFlow, can consume later.
+FullPlot can generate simple rectangular-grid HDF5 maps. The layout is intentionally generic: a map group contains one `/axes` group, one `/outputs` group, and optional metadata. FullFlow can read this layout with `Map.from_hdf5(...)`, but the file is just HDF5 and does not require FullFlow.
 
 ```python
 import fullplot as fplt
@@ -79,11 +79,25 @@ fplt.generate_map(
     "demo_map.h5",
     group="properties",
     axes=[
-        fplt.Axis.linear("pressure", 1.0e5, 5.0e5, 5),
-        fplt.Axis.linear("temperature", 250.0, 500.0, 6),
+        fplt.Axis.linear("pressure", 1.0e5, 5.0e5, 5, units="Pa"),
+        fplt.Axis.linear("temperature", 250.0, 500.0, 6, units="K"),
     ],
-    evaluate=lambda pressure, temperature: {
-        "density": pressure / (287.0 * temperature),
+    constants={"gas_constant": 287.0},
+    evaluate=lambda pressure, temperature, gas_constant: {
+        "density": pressure / (gas_constant * temperature),
     },
+    overwrite=True,
 )
 ```
+
+`Axis` defines the independent variables that are swept while the map is generated:
+
+```python
+fplt.Axis.linear("temperature", start=250.0, stop=600.0, count=8)
+fplt.Axis.log("pressure", start=1.0e5, stop=1.0e7, count=9)
+fplt.Axis.values("mixture_ratio", values=[1.5, 2.0, 2.5, 3.0])
+```
+
+Use `constants={...}` for inputs that should be passed to every map evaluation but should not become interpolation axes. The `evaluate` function must return a flat dictionary of scalar numeric outputs. Each key becomes one dataset in `/outputs`.
+
+See `examples/maps/` for detailed map-generation examples.
