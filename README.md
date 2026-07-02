@@ -88,21 +88,3 @@ fplt.generate_map(
     },
 )
 ```
-
-## Command line
-
-After installation, the `fullplot` command can inspect HDF5 files:
-
-```bash
-fullplot engine_sim.h5 --tree
-fullplot engine_sim.h5 --list
-```
-
-## Release checks
-
-```bash
-uv sync --dev
-uv run ruff check .
-uv run pytest
-uv build --no-sources
-```

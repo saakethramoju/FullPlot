@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## 0.0.1
 
 Initial standalone FullPlot package.
 
@@ -11,4 +11,3 @@ Initial standalone FullPlot package.
 - Add generated traces for redlines, bluelines, commands, and derived data.
 - Add HDF5 trace writing.
 - Add HDF5 map generation with `Axis` and `generate_map`.
-- Keep FullPlot independent from FullFlow.
