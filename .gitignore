@@ -13,6 +13,7 @@ env/
 .ruff_cache/
 .coverage
 htmlcov/
+test.py
 
 # Build/distribution output
 build/

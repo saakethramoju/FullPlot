@@ -6,7 +6,7 @@ import posixpath
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 import h5py
 import numpy as np
@@ -51,7 +51,7 @@ class LineSeries:
     role: str = "data"
 
 
-def _as_1d_numeric_array(values, name: str) -> np.ndarray:
+def _as_1d_numeric_array(values, name: str, omit_nonfinite: bool = False) -> np.ndarray:
     array = np.asarray(values, dtype=float)
 
     if array.ndim != 1:
@@ -60,10 +60,34 @@ def _as_1d_numeric_array(values, name: str) -> np.ndarray:
     if array.size == 0:
         raise PlotDataError(f"{name} cannot be empty.")
 
-    if not np.all(np.isfinite(array)):
-        raise PlotDataError(f"{name} must contain only finite values.")
+    if omit_nonfinite:
+        array = array[np.isfinite(array)]
+
+        if array.size == 0:
+            raise PlotDataError(f"{name} has no finite values.")
 
     return array
+
+
+def _omit_nonfinite_xy(x, y, name: str) -> tuple[np.ndarray, np.ndarray]:
+    x_array = np.asarray(x, dtype=float)
+    y_array = np.asarray(y, dtype=float)
+
+    if x_array.ndim != 1 or y_array.ndim != 1:
+        raise PlotDataError(f"{name} must be one-dimensional after selection.")
+
+    if x_array.shape != y_array.shape:
+        raise PlotDataError(
+            f"{name} has mismatched x and y lengths: "
+            f"{len(x_array)} and {len(y_array)}."
+        )
+
+    mask = np.isfinite(x_array) & np.isfinite(y_array)
+
+    if not np.any(mask):
+        raise PlotDataError(f"{name} has no finite x/y pairs to plot.")
+
+    return x_array[mask], y_array[mask]
 
 
 def _odd_window_count(count: int, minimum: int = 3) -> int:
@@ -99,20 +123,43 @@ def _trace_window_count(x: np.ndarray, window, minimum: int = 3) -> int:
     return _odd_window_count(round(window / dx), minimum=minimum)
 
 
+def _role_color(role: str, theme: str):
+    role = str(role or "data").lower().strip()
+    theme = check_theme(theme)
+
+    role_colors = {
+        "dark": {
+            "redline": "#ff7a7a",
+            "blueline": "#7ab8ff",
+            "yellowline": "#ffd36a",
+            "amberline": "#ffd36a",
+            "warning": "#ffd36a",
+            "greenline": "#6aff9a",
+        },
+        "light": {
+            "redline": "#7f1d1d",
+            "blueline": "#245a9a",
+            "yellowline": "#a87900",
+            "amberline": "#a87900",
+            "warning": "#a87900",
+            "greenline": "#1c6b3f",
+        },
+    }
+
+    return role_colors[theme].get(role)
+
+
 def _line_style_for_role(role: str, theme: str, color, linewidth: float) -> dict:
     role = str(role or "data").lower().strip()
+    line_color = _role_color(role, theme)
 
-    if role == "redline":
-        return {"color": "#ff3333", "linestyle": "--", "linewidth": linewidth}
-
-    if role == "blueline":
-        return {"color": "#3399ff", "linestyle": "--", "linewidth": linewidth}
-
-    if role in {"yellowline", "amberline", "warning"}:
-        return {"color": "#ffcc00", "linestyle": "--", "linewidth": linewidth}
-
-    if role == "greenline":
-        return {"color": "#00cc66", "linestyle": "--", "linewidth": linewidth}
+    if role in {"redline", "blueline", "yellowline", "amberline", "warning", "greenline"}:
+        return {
+            "color": line_color,
+            "linestyle": "--",
+            "linewidth": 1.15 * linewidth,
+            "alpha": 0.95,
+        }
 
     if role == "filtered":
         return {"color": color, "linestyle": "--", "linewidth": linewidth}
@@ -149,6 +196,14 @@ class Trace:
                 f"Received {len(self.x)} and {len(self.y)}."
             )
 
+        mask = np.isfinite(self.x) & np.isfinite(self.y)
+
+        if not np.any(mask):
+            raise PlotDataError("Trace has no finite x/y pairs.")
+
+        self.x = self.x[mask]
+        self.y = self.y[mask]
+
         self.name = str(self.name)
         self.role = str(self.role or "data")
         self.attrs = {} if self.attrs is None else dict(self.attrs)
@@ -167,7 +222,7 @@ class Trace:
 
     @classmethod
     def constant(cls, name: str, x, y: float, role: str = "data", **attrs) -> "Trace":
-        x_array = _as_1d_numeric_array(x, "Trace x")
+        x_array = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
         return cls(x=x_array, y=np.full_like(x_array, float(y), dtype=float), name=name, role=role, attrs=attrs)
 
     @classmethod
@@ -176,6 +231,12 @@ class Trace:
 
         if points.ndim != 2 or points.shape[1] != 2:
             raise PlotDataError("points must be an array-like sequence of (x, y) pairs.")
+
+        finite_points = np.isfinite(points).all(axis=1)
+        points = points[finite_points]
+
+        if points.size == 0:
+            raise PlotDataError("points must contain at least one finite (x, y) pair.")
 
         xp = points[:, 0]
         yp = points[:, 1]
@@ -186,7 +247,7 @@ class Trace:
         if x is None:
             x_array = xp
         else:
-            x_array = _as_1d_numeric_array(x, "Trace x")
+            x_array = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
 
         mode = str(mode).lower().strip()
 
@@ -203,7 +264,7 @@ class Trace:
 
     @classmethod
     def from_function(cls, name: str, x, function, role: str = "data", **attrs) -> "Trace":
-        x_array = _as_1d_numeric_array(x, "Trace x")
+        x_array = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
         y_array = np.asarray(function(x_array), dtype=float)
         return cls(x=x_array, y=y_array, name=name, role=role, attrs=attrs)
 
@@ -288,7 +349,7 @@ class Trace:
         return Trace(x=self.x.copy(), y=np.gradient(self.y, self.x), name=(self.name + " derivative") if name is None else name, role=self.role, attrs=self.attrs)
 
     def resample(self, x, name: str | None = None) -> "Trace":
-        x_array = _as_1d_numeric_array(x, "resample x")
+        x_array = _as_1d_numeric_array(x, "resample x", omit_nonfinite=True)
         return Trace(x=x_array, y=np.interp(x_array, self.x, self.y), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
 
     def _binary_operation(self, other, operation, symbol: str) -> "Trace":
@@ -741,7 +802,7 @@ class H5File:
             path = self._resolve_dataset_path(h5, name)
             return h5[path][()]
 
-    def traces(self) -> list[str]:
+    def traces(self) -> List[str]:
         """Return numeric one-dimensional dataset paths under the current root."""
 
         with h5py.File(self.filename, "r") as h5:
@@ -961,15 +1022,17 @@ class H5File:
         for series in left_series:
             color = next(colors)
             x_plot = series.x if series.x is not None else x_array
+            x_clean, y_clean = _omit_nonfinite_xy(x_plot, series.data, series.label)
             style = _line_style_for_role(series.role, theme, color, linewidth)
-            ax.plot(x_plot, series.data, label=series.label, **style)
+            ax.plot(x_clean, y_clean, label=series.label, **style)
 
         if ax2 is not None:
             for series in right_series:
                 color = next(colors)
                 x_plot = series.x if series.x is not None else x_array
+                x_clean, y_clean = _omit_nonfinite_xy(x_plot, series.data, series.label)
                 style = _line_style_for_role(series.role, theme, color, linewidth)
-                ax2.plot(x_plot, series.data, label=series.label, **style)
+                ax2.plot(x_clean, y_clean, label=series.label, **style)
 
         if xlabel is None:
             xlabel = x_name

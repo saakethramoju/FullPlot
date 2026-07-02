@@ -37,36 +37,54 @@ run.plot(
 
 A `Trace` is a generic one-dimensional line of data. It can represent simulation data, test data, a filtered trace, a redline, a blueline, a command trace, or a derived trace.
 
+FullPlot does not have a special test-data object. If your HDF5 file contains normal datasets such as `time`, `PCMC_1`, `PBTC_1`, and `SHAFT_RPM_1`, you can plot them directly:
+
+```python
+import fullplot as fplt
+
+run = fplt.open("hotfire.h5")
+run.plot(x="time", y=["PCMC_1", "PCMC_2", "PCMC_3"])
+```
+
+Use `trace()` when you want to extract a reusable line, filter it, create redlines/bluelines, combine data from multiple files, or do trace math:
+
 ```python
 import fullplot as fplt
 
 run = fplt.open("hotfire.h5")
 
-pcmc = run.trace("pcmc", x="time")
+pcmc = run.trace(y="PCMC_1", x="time")
 pcmc_filtered = pcmc.filter("moving_average", window=0.05)
-redline = fplt.Trace.constant("pcmc Redline", x=pcmc.x, y=400.0, role="redline")
+redline = fplt.Trace.constant("PCMC Redline", x=pcmc.x, y=400.0, role="redline")
 
 fplt.plot([pcmc, pcmc_filtered, redline])
 ```
 
-## Generated traces
+Non-finite values such as `NaN` and `inf` are omitted automatically for trace plotting and `Trace` creation.
+
+## Generated traces and roles
+
+Trace roles are only plotting hints. They do not implement abort logic or limit checking. The special role colors are intentionally slightly different from the normal line-color cycle in light and dark themes so redlines, bluelines, warning lines, and ordinary data traces are not confused.
 
 ```python
-import numpy as np
 import fullplot as fplt
 
-time = np.linspace(0.0, 10.0, 1001)
+redline = fplt.Trace.constant("Abort Limit", x=pcmc.x, y=400.0, role="redline")
+yellowline = fplt.Trace.constant("Warning Limit", x=pcmc.x, y=350.0, role="yellowline")
+blueline = fplt.Trace.constant("Low Reference", x=pcmc.x, y=100.0, role="blueline")
 
 command = fplt.Trace.from_points(
     "Main Ox Valve Command",
     points=[(0.0, 0.0), (1.0, 0.0), (1.1, 1.0), (8.0, 1.0), (8.1, 0.0)],
-    x=time,
+    x=pcmc.x,
     mode="previous",
     role="command",
 )
 
-fplt.plot(command)
+fplt.plot([pcmc, redline, yellowline, blueline, command])
 ```
+
+See `examples/traces/` for detailed examples covering generated sensor data, filtering, redlines/bluelines, commands, trace math, resampling, derivatives, saving processed traces, and missing-value handling.
 
 ## Map generation
 
