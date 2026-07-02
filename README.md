@@ -52,15 +52,21 @@ Use `trace()` when you want to extract a reusable line, filter it, create redlin
 import fullplot as fplt
 
 run = fplt.open("hotfire.h5")
+time = run.time("time")
 
-pcmc = run.trace(y="PCMC_1", x="time")
+pcmc = run.trace(y="PCMC_1", x=time)
 pcmc_filtered = pcmc.filter("moving_average", window=0.05)
-redline = fplt.Trace.constant("PCMC Redline", x=pcmc.x, y=400.0, role="redline")
+redline = fplt.Trace.constant("PCMC Redline", x=time, y=400.0, role="redline")
+
+# Shift the shared time axis so original test time 95.0 becomes model time 0.
+time.zero_at(95.0)
 
 fplt.plot([pcmc, pcmc_filtered, redline])
 ```
 
-Non-finite values such as `NaN` and `inf` are omitted automatically for trace plotting and `Trace` creation.
+`TimeAxis` objects are useful when several traces should share one shifted time basis. `file.time("time")` reads a 1D HDF5 time dataset as a shared time object. Every trace built with `x=time` uses the current shifted values from that same object. Use `time.zero_at(test_time)` or `time.align(data_time=test_time, model_time=model_time)` to change where `t = 0` is located.
+
+`Trace.window(start, stop)` keeps the full time axis and replaces values outside the selected interval with `NaN`. This makes partial test-data windows easy to plot and easy for downstream solvers to treat as missing data outside the active interval. Non-finite y-values such as `NaN` are preserved in traces and show up as plot gaps; use `omit_missing()` when you explicitly want a compact finite trace.
 
 ## Generated traces and roles
 

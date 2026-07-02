@@ -15,5 +15,9 @@ Initial standalone FullPlot package.
 ## Unreleased
 
 - Add detailed trace examples with synthetic hotfire-style HDF5 data generation.
-- Omit NaN and infinite values automatically in Trace creation and trace plotting.
+- Add shared `TimeAxis` objects for test/simulation time alignment.
+- Add `H5File.time(...)` and module-level `fullplot.time(...)`.
+- Change `Trace.window(...)` to preserve the full time axis and mask values outside the window with `NaN`.
+- Preserve non-finite y-values in traces so missing test-data samples remain visible as plot gaps.
+- Add `Trace.omit_missing()` / `Trace.drop_missing()` for compact finite traces.
 - Adjust redline/blueline/yellowline/greenline role colors to avoid confusion with normal data colors.

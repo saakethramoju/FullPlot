@@ -40,8 +40,14 @@ Run the examples from this directory or from the repository root.
 8. `7_save_processed_traces.py`  
    Saves raw, filtered, and generated traces to a new HDF5 file.
 
-9. `8_missing_nan_values_are_omitted.py`  
-   Shows that NaN/missing samples are automatically omitted in Trace workflows.
+9. `8_missing_nan_values_create_gaps.py`  
+   Shows that NaN/missing samples are preserved in traces and appear as plot gaps.
+
+10. `9_shared_time_axis_alignment.py`  
+    Shows how to create a shared `TimeAxis`, attach several traces to it, and shift all traces by changing where `t = 0` is located.
+
+11. `10_windowed_trace_keeps_full_time.py`  
+    Shows that `Trace.window()` masks values outside the selected window with `NaN` while keeping the full time axis.
 
 ## Core workflow
 
@@ -49,12 +55,38 @@ Run the examples from this directory or from the repository root.
 import fullplot as fplt
 
 file = fplt.open("trace_demo.h5")
-pc = file.trace(y="PCMC_1", x="time")
+time = file.time("time")
+
+pc = file.trace(y="PCMC_1", x=time)
 pc_filtered = pc.filter("moving_average", window=0.05)
-redline = fplt.Trace.constant("PCMC Redline", x=pc.x, y=400.0, role="redline")
+redline = fplt.Trace.constant("PCMC Redline", x=time, y=400.0, role="redline")
+
+# Shift the shared time axis so all traces using it shift together.
+time.zero_at(0.05)
 
 fplt.plot([pc, pc_filtered, redline])
 ```
 
 FullPlot does not manage units or calibrations. It assumes the HDF5 data is
 already in the form you want to analyze and plot.
+
+## Time axes and windowed test data
+
+Use `file.time("time")` when several traces should share the same time basis:
+
+```python
+time = file.time("time")
+pc = file.trace(y="PCMC_1", x=time)
+oipt = file.trace(y="OIPT", x=time)
+
+time.zero_at(0.05)
+```
+
+Changing the `TimeAxis` zero point shifts every trace that references that time
+object. This is useful when test-data time zero and simulation time zero are not
+the same.
+
+`Trace.window(start, stop)` now keeps the full time axis and replaces values
+outside the selected window with `NaN`. That makes partial test-data windows
+easy to plot and easy for downstream solvers to treat as missing data outside
+the active balance interval.

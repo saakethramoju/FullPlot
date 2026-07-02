@@ -82,10 +82,14 @@ def _omit_nonfinite_xy(x, y, name: str) -> tuple[np.ndarray, np.ndarray]:
             f"{len(x_array)} and {len(y_array)}."
         )
 
-    mask = np.isfinite(x_array) & np.isfinite(y_array)
+    # Non-finite time values are invalid, but non-finite y values are useful
+    # information for engineering test data. Preserve NaN y samples so
+    # Matplotlib draws visible gaps instead of connecting through dropout
+    # regions.
+    mask = np.isfinite(x_array)
 
     if not np.any(mask):
-        raise PlotDataError(f"{name} has no finite x/y pairs to plot.")
+        raise PlotDataError(f"{name} has no finite x values to plot.")
 
     return x_array[mask], y_array[mask]
 
@@ -171,6 +175,122 @@ def _line_style_for_role(role: str, theme: str, color, linewidth: float) -> dict
 
 
 @dataclass
+class TimeAxis:
+    """A shared, shiftable time axis for related traces.
+
+    TimeAxis stores the original HDF5 time samples and a mutable zero point.
+    Traces can share one TimeAxis object, so changing the zero point shifts the
+    time basis for every trace that was built from that axis.
+    """
+
+    raw: np.ndarray
+    name: str = "time"
+    zero: float = 0.0
+    attrs: dict[str, Any] | None = None
+
+    def __post_init__(self):
+        self.raw = _as_1d_numeric_array(self.raw, "TimeAxis raw time")
+
+        if not np.all(np.isfinite(self.raw)):
+            raise PlotDataError("TimeAxis cannot contain non-finite time values.")
+
+        if self.raw.size > 1 and np.any(np.diff(self.raw) <= 0.0):
+            raise PlotDataError("TimeAxis values must be strictly increasing.")
+
+        self.name = str(self.name)
+        self.zero = float(self.zero)
+        self.attrs = {} if self.attrs is None else dict(self.attrs)
+
+    @property
+    def values(self) -> np.ndarray:
+        """Return the current shifted time values."""
+        return self.raw - self.zero
+
+    @property
+    def value(self) -> np.ndarray:
+        """Alias for values."""
+        return self.values
+
+    @property
+    def time(self) -> np.ndarray:
+        """Alias for values."""
+        return self.values
+
+    @property
+    def count(self) -> int:
+        return int(self.raw.size)
+
+    @property
+    def tmin(self) -> float:
+        return float(self.values[0])
+
+    @property
+    def tmax(self) -> float:
+        return float(self.values[-1])
+
+    @property
+    def raw_tmin(self) -> float:
+        return float(self.raw[0])
+
+    @property
+    def raw_tmax(self) -> float:
+        return float(self.raw[-1])
+
+    @property
+    def duration(self) -> float:
+        if self.raw.size < 2:
+            return 0.0
+        return float(self.raw[-1] - self.raw[0])
+
+    @property
+    def dt_array(self) -> np.ndarray:
+        return np.diff(self.raw)
+
+    @property
+    def dt(self) -> float:
+        """Return the nominal timestep, using the median for nonuniform data."""
+        if self.raw.size < 2:
+            return float("nan")
+        return float(np.median(self.dt_array))
+
+    @property
+    def is_uniform(self) -> bool:
+        if self.raw.size < 3:
+            return True
+        dt = self.dt_array
+        return bool(np.allclose(dt, np.median(dt), rtol=1e-6, atol=1e-12))
+
+    def zero_at(self, time: float) -> "TimeAxis":
+        """Shift the time basis so the given raw data time becomes t = 0."""
+        self.zero = float(time)
+        return self
+
+    def align(self, data_time: float, model_time: float = 0.0) -> "TimeAxis":
+        """Shift the time basis so data_time maps to model_time."""
+        self.zero = float(data_time) - float(model_time)
+        return self
+
+    def copy(self, name: str | None = None) -> "TimeAxis":
+        return TimeAxis(
+            raw=self.raw.copy(),
+            name=self.name if name is None else name,
+            zero=self.zero,
+            attrs=self.attrs,
+        )
+
+    def __len__(self) -> int:
+        return self.count
+
+    def __array__(self, dtype=None):
+        array = self.values
+        if dtype is not None:
+            array = array.astype(dtype)
+        return array
+
+    def __getitem__(self, item):
+        return self.values[item]
+
+
 class Trace:
     """A prepared one-dimensional line of data.
 
@@ -178,17 +298,27 @@ class Trace:
     data, a filtered signal, a command, a redline, a blueline, or any other
     one-dimensional data series. FullPlot uses it for overlaying data from
     different files and for generated lines that do not already exist in HDF5.
+
+    If x is a TimeAxis, the trace keeps a reference to that TimeAxis. Shifting
+    the TimeAxis then shifts this trace and every other trace sharing it.
     """
 
-    x: np.ndarray
-    y: np.ndarray
-    name: str = "trace"
-    role: str = "data"
-    attrs: dict[str, Any] | None = None
+    def __init__(
+        self,
+        x,
+        y,
+        name: str = "trace",
+        role: str = "data",
+        attrs: dict[str, Any] | None = None,
+    ):
+        self.time_axis = x if isinstance(x, TimeAxis) else None
 
-    def __post_init__(self):
-        self.x = _as_1d_numeric_array(self.x, "Trace x")
-        self.y = _as_1d_numeric_array(self.y, "Trace y")
+        if self.time_axis is None:
+            self._x = _as_1d_numeric_array(x, "Trace x")
+        else:
+            self._x = None
+
+        self.y = _as_1d_numeric_array(y, "Trace y")
 
         if self.x.shape != self.y.shape:
             raise PlotDataError(
@@ -196,17 +326,25 @@ class Trace:
                 f"Received {len(self.x)} and {len(self.y)}."
             )
 
-        mask = np.isfinite(self.x) & np.isfinite(self.y)
+        if self.time_axis is None:
+            mask = np.isfinite(self._x)
 
-        if not np.any(mask):
-            raise PlotDataError("Trace has no finite x/y pairs.")
+            if not np.any(mask):
+                raise PlotDataError("Trace has no finite x values.")
 
-        self.x = self.x[mask]
-        self.y = self.y[mask]
+            if not np.all(mask):
+                self._x = self._x[mask]
+                self.y = self.y[mask]
 
-        self.name = str(self.name)
-        self.role = str(self.role or "data")
-        self.attrs = {} if self.attrs is None else dict(self.attrs)
+        self.name = str(name)
+        self.role = str(role or "data")
+        self.attrs = {} if attrs is None else dict(attrs)
+
+    @property
+    def x(self) -> np.ndarray:
+        if self.time_axis is not None:
+            return self.time_axis.values
+        return self._x
 
     @property
     def time(self) -> np.ndarray:
@@ -216,14 +354,40 @@ class Trace:
     def value(self) -> np.ndarray:
         return self.y
 
+    @property
+    def finite(self) -> np.ndarray:
+        return np.isfinite(self.x) & np.isfinite(self.y)
+
+    @property
+    def tmin(self) -> float:
+        return float(self.x[0])
+
+    @property
+    def tmax(self) -> float:
+        return float(self.x[-1])
+
+    @property
+    def time_range(self) -> tuple[float, float]:
+        return self.tmin, self.tmax
+
+    def _x_for_new_trace(self):
+        if self.time_axis is not None:
+            return self.time_axis
+        return self.x.copy()
+
     @classmethod
     def from_arrays(cls, name: str, x, y, role: str = "data", **attrs) -> "Trace":
-        return cls(x=np.asarray(x, dtype=float), y=np.asarray(y, dtype=float), name=name, role=role, attrs=attrs)
+        return cls(x=x, y=np.asarray(y, dtype=float), name=name, role=role, attrs=attrs)
 
     @classmethod
     def constant(cls, name: str, x, y: float, role: str = "data", **attrs) -> "Trace":
-        x_array = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
-        return cls(x=x_array, y=np.full_like(x_array, float(y), dtype=float), name=name, role=role, attrs=attrs)
+        if isinstance(x, TimeAxis):
+            x_values = x
+            y_array = np.full(len(x), float(y), dtype=float)
+        else:
+            x_values = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
+            y_array = np.full_like(x_values, float(y), dtype=float)
+        return cls(x=x_values, y=y_array, name=name, role=role, attrs=attrs)
 
     @classmethod
     def from_points(cls, name: str, points, x=None, mode: str = "linear", role: str = "data", **attrs) -> "Trace":
@@ -245,9 +409,14 @@ class Trace:
         yp = yp[order]
 
         if x is None:
+            x_values = xp
             x_array = xp
+        elif isinstance(x, TimeAxis):
+            x_values = x
+            x_array = x.values
         else:
-            x_array = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
+            x_values = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
+            x_array = x_values
 
         mode = str(mode).lower().strip()
 
@@ -260,19 +429,29 @@ class Trace:
         else:
             raise ValueError("mode must be 'linear' or 'previous'.")
 
-        return cls(x=x_array, y=y_array, name=name, role=role, attrs=attrs)
+        return cls(x=x_values, y=y_array, name=name, role=role, attrs=attrs)
 
     @classmethod
     def from_function(cls, name: str, x, function, role: str = "data", **attrs) -> "Trace":
-        x_array = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
+        if isinstance(x, TimeAxis):
+            x_values = x
+            x_array = x.values
+        else:
+            x_values = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
+            x_array = x_values
         y_array = np.asarray(function(x_array), dtype=float)
-        return cls(x=x_array, y=y_array, name=name, role=role, attrs=attrs)
+        return cls(x=x_values, y=y_array, name=name, role=role, attrs=attrs)
 
-    def copy(self, name: str | None = None, role: str | None = None, **attrs) -> "Trace":
+    def copy(self, name: str | None = None, role: str | None = None, copy_time_axis: bool = False, **attrs) -> "Trace":
         merged_attrs = dict(self.attrs)
         merged_attrs.update(attrs)
+        x_values = self._x_for_new_trace()
+
+        if copy_time_axis and isinstance(x_values, TimeAxis):
+            x_values = x_values.copy()
+
         return Trace(
-            x=self.x.copy(),
+            x=x_values,
             y=self.y.copy(),
             name=self.name if name is None else name,
             role=self.role if role is None else role,
@@ -280,6 +459,12 @@ class Trace:
         )
 
     def window(self, start: float | None = None, stop: float | None = None, name: str | None = None) -> "Trace":
+        """Return a trace with values outside the time window replaced by NaN.
+
+        The time axis is not cropped. Keeping the full time axis makes partial
+        test-data traces easy to plot and easy for a solver to interpret as
+        valid data inside the window and missing data outside the window.
+        """
         mask = np.ones_like(self.x, dtype=bool)
 
         if start is not None:
@@ -288,34 +473,53 @@ class Trace:
         if stop is not None:
             mask &= self.x <= float(stop)
 
+        y = self.y.copy()
+        y[~mask] = np.nan
+
+        attrs = dict(self.attrs)
+        attrs.update({"window_start": start, "window_stop": stop, "window_mode": "nan_mask"})
+
+        return Trace(x=self._x_for_new_trace(), y=y, name=self.name if name is None else name, role=self.role, attrs=attrs)
+
+    def omit_missing(self, name: str | None = None) -> "Trace":
+        """Return a compact trace containing only finite x/y pairs."""
+        mask = self.finite
+
+        if not np.any(mask):
+            raise PlotDataError(f"Trace {self.name!r} has no finite x/y pairs.")
+
         return Trace(x=self.x[mask], y=self.y[mask], name=self.name if name is None else name, role=self.role, attrs=self.attrs)
+
+    drop_missing = omit_missing
 
     def filter(self, method: str = "moving_average", window=None, order: int = 2, cutoff: float | None = None, name: str | None = None) -> "Trace":
         method = str(method).lower().strip().replace("-", "_").replace(" ", "_")
 
+        finite_self = self.omit_missing(name=self.name)
+
         if method in {"moving_average", "mean", "average"}:
-            count = _trace_window_count(self.x, window, minimum=1)
+            count = _trace_window_count(finite_self.x, window, minimum=1)
             kernel = np.ones(count, dtype=float) / count
-            y = np.convolve(self.y, kernel, mode="same")
+            finite_y = np.convolve(finite_self.y, kernel, mode="same")
 
         elif method in {"median", "median_filter"}:
-            count = _trace_window_count(self.x, window, minimum=3)
-            y = medfilt(self.y, kernel_size=count)
+            count = _trace_window_count(finite_self.x, window, minimum=3)
+            finite_y = medfilt(finite_self.y, kernel_size=count)
 
         elif method in {"savgol", "savitzky_golay", "savitzky-golay"}:
-            count = _trace_window_count(self.x, window, minimum=int(order) + 2)
+            count = _trace_window_count(finite_self.x, window, minimum=int(order) + 2)
             if count <= order:
                 count = _odd_window_count(order + 2, minimum=order + 2)
-            if count > len(self.y):
-                count = _odd_window_count(len(self.y) if len(self.y) % 2 else len(self.y) - 1, minimum=3)
-            y = savgol_filter(self.y, window_length=count, polyorder=int(order), mode="interp")
+            if count > len(finite_self.y):
+                count = _odd_window_count(len(finite_self.y) if len(finite_self.y) % 2 else len(finite_self.y) - 1, minimum=3)
+            finite_y = savgol_filter(finite_self.y, window_length=count, polyorder=int(order), mode="interp")
 
         elif method in {"lowpass", "low_pass"}:
             if cutoff is None:
                 raise ValueError("lowpass filtering requires cutoff in Hz or cycles per x-unit.")
-            if self.x.size < 2:
+            if finite_self.x.size < 2:
                 raise PlotDataError("lowpass filtering requires at least two samples.")
-            dx = np.median(np.diff(self.x))
+            dx = np.median(np.diff(finite_self.x))
             if dx <= 0.0 or not np.isfinite(dx):
                 raise ValueError("lowpass filtering requires a strictly increasing x array.")
             fs = 1.0 / dx
@@ -323,16 +527,22 @@ class Trace:
             if not 0.0 < normalized_cutoff < 1.0:
                 raise ValueError("lowpass cutoff must be between 0 and the Nyquist frequency.")
             sos = butter(N=4, Wn=normalized_cutoff, btype="lowpass", output="sos")
-            y = sosfiltfilt(sos, self.y)
+            finite_y = sosfiltfilt(sos, finite_self.y)
 
         else:
             raise ValueError("Unsupported filter method. Use moving_average, median, savgol, or lowpass.")
+
+        if finite_self.y.size == self.y.size:
+            y = np.asarray(finite_y, dtype=float)
+        else:
+            y = np.full_like(self.y, np.nan, dtype=float)
+            y[self.finite] = finite_y
 
         attrs = dict(self.attrs)
         attrs.update({"filter": method, "window": window, "order": order, "cutoff": cutoff, "source": self.name})
 
         return Trace(
-            x=self.x.copy(),
+            x=self._x_for_new_trace(),
             y=np.asarray(y, dtype=float),
             name=(self.name + " filtered") if name is None else name,
             role="filtered",
@@ -340,17 +550,22 @@ class Trace:
         )
 
     def scale(self, factor: float, name: str | None = None) -> "Trace":
-        return Trace(x=self.x.copy(), y=self.y * float(factor), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
+        return Trace(x=self._x_for_new_trace(), y=self.y * float(factor), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
 
     def offset(self, value: float, name: str | None = None) -> "Trace":
-        return Trace(x=self.x.copy(), y=self.y + float(value), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
+        return Trace(x=self._x_for_new_trace(), y=self.y + float(value), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
 
     def derivative(self, name: str | None = None) -> "Trace":
-        return Trace(x=self.x.copy(), y=np.gradient(self.y, self.x), name=(self.name + " derivative") if name is None else name, role=self.role, attrs=self.attrs)
+        return Trace(x=self._x_for_new_trace(), y=np.gradient(self.y, self.x), name=(self.name + " derivative") if name is None else name, role=self.role, attrs=self.attrs)
 
     def resample(self, x, name: str | None = None) -> "Trace":
-        x_array = _as_1d_numeric_array(x, "resample x", omit_nonfinite=True)
-        return Trace(x=x_array, y=np.interp(x_array, self.x, self.y), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
+        if isinstance(x, TimeAxis):
+            x_values = x
+            x_array = x.values
+        else:
+            x_values = _as_1d_numeric_array(x, "resample x", omit_nonfinite=True)
+            x_array = x_values
+        return Trace(x=x_values, y=np.interp(x_array, self.x, self.y), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
 
     def _binary_operation(self, other, operation, symbol: str) -> "Trace":
         if isinstance(other, Trace):
@@ -360,7 +575,7 @@ class Trace:
             other_y = other
             name = f"{self.name} {symbol} {other}"
 
-        return Trace(x=self.x.copy(), y=operation(self.y, other_y), name=name, role="derived", attrs={"left": self.name, "operation": symbol})
+        return Trace(x=self._x_for_new_trace(), y=operation(self.y, other_y), name=name, role="derived", attrs={"left": self.name, "operation": symbol})
 
     def __add__(self, other):
         return self._binary_operation(other, np.add, "+")
@@ -802,6 +1017,24 @@ class H5File:
             path = self._resolve_dataset_path(h5, name)
             return h5[path][()]
 
+    def time(self, name: str = "time") -> TimeAxis:
+        """Read one HDF5 dataset as a shared, shiftable TimeAxis."""
+
+        with h5py.File(self.filename, "r") as h5:
+            path = self._resolve_dataset_path(h5, name)
+            dataset = h5[path]
+            array = np.asarray(dataset[()])
+
+            if array.ndim != 1:
+                raise PlotDataError("time must be a 1D dataset.")
+
+            if not _is_numeric_dtype(array.dtype):
+                raise PlotDataError("time must be numeric.")
+
+            attrs = {key: _decode_scalar(value) for key, value in dataset.attrs.items()}
+
+        return TimeAxis(raw=array, name=_basename(path), attrs={"source_file": self.filename, "source_root": self.root, "source_dataset": path, **attrs})
+
     def traces(self) -> List[str]:
         """Return numeric one-dimensional dataset paths under the current root."""
 
@@ -831,17 +1064,23 @@ class H5File:
             return y.copy(name=name, role=role)
 
         with h5py.File(self.filename, "r") as h5:
+            x_values = None
             x_array = None
 
             if x is not None:
-                x_path = self._resolve_dataset_path(h5, x)
-                x_array = np.asarray(h5[x_path][()])
+                if isinstance(x, TimeAxis):
+                    x_values = x
+                    x_array = x.values
+                else:
+                    x_path = self._resolve_dataset_path(h5, x)
+                    x_array = np.asarray(h5[x_path][()])
+                    x_values = x_array
 
-                if x_array.ndim != 1:
-                    raise PlotDataError("x must be a 1D dataset.")
+                    if x_array.ndim != 1:
+                        raise PlotDataError("x must be a 1D dataset.")
 
-                if not _is_numeric_dtype(x_array.dtype):
-                    raise PlotDataError("x must be numeric.")
+                    if not _is_numeric_dtype(x_array.dtype):
+                        raise PlotDataError("x must be numeric.")
 
             series = self._build_line_series(
                 h5=h5,
@@ -860,6 +1099,7 @@ class H5File:
 
         if x_array is None:
             x_array = np.arange(series_item.length, dtype=float)
+            x_values = x_array
 
         if len(x_array) != series_item.length:
             raise PlotDataError(
@@ -868,7 +1108,7 @@ class H5File:
             )
 
         return Trace(
-            x=x_array,
+            x=x_values,
             y=series_item.data,
             name=series_item.label if name is None else name,
             role=role,
@@ -935,6 +1175,9 @@ class H5File:
                 if isinstance(x, Trace):
                     x_array = x.y
                     x_name = x.name
+                elif isinstance(x, TimeAxis):
+                    x_array = x.values
+                    x_name = x.name
                 else:
                     if h5 is None:
                         x_array = np.asarray(x)
@@ -945,7 +1188,7 @@ class H5File:
                         x_array = np.asarray(h5[x_path][()])
 
                 if x_array.ndim != 1:
-                    raise PlotDataError("x must be a 1D dataset, array, or Trace.")
+                    raise PlotDataError("x must be a 1D dataset, array, TimeAxis, or Trace.")
 
                 if not _is_numeric_dtype(x_array.dtype):
                     raise PlotDataError("x must be numeric.")
@@ -1605,6 +1848,10 @@ def read(filename: str | Path, name: str, root: str = "/"):
     return open(filename, root=root).read(name)
 
 
+def time(filename: str | Path, name: str = "time", root: str = "/") -> TimeAxis:
+    return open(filename, root=root).time(name)
+
+
 def values(filename: str | Path, root: str = "/", group: str | None = None, **kwargs):
     return open(filename, root=root).values(group=group, **kwargs)
 
@@ -1695,6 +1942,7 @@ __all__ = [
     "DatasetNotFoundError",
     "AmbiguousDatasetError",
     "PlotDataError",
+    "TimeAxis",
     "Trace",
     "H5File",
     "open",
@@ -1702,6 +1950,7 @@ __all__ = [
     "list",
     "read",
     "values",
+    "time",
     "trace",
     "plot",
     "map",
