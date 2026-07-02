@@ -1,0 +1,67 @@
+[project]
+name = "fullplot"
+version = "0.0.1"
+description = "A lightweight HDF5 trace plotting, filtering, and map-generation helper for engineering data."
+readme = "README.md"
+license = "GPL-3.0-only"
+authors = [
+    { name = "Saaketh Ramoju", email = "skramoju@gmail.com" }
+]
+requires-python = ">=3.11"
+keywords = [
+    "hdf5",
+    "plotting",
+    "engineering",
+    "simulation",
+    "test-data",
+    "map-generation",
+    "scientific-computing",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "numpy>=1.26.0",
+    "scipy>=1.11.0",
+    "h5py>=3.10.0",
+    "matplotlib>=3.8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/saakethramoju/FullPlot"
+Repository = "https://github.com/saakethramoju/FullPlot"
+Issues = "https://github.com/saakethramoju/FullPlot/issues"
+PyPI = "https://pypi.org/project/fullplot/"
+
+[project.scripts]
+fullplot = "fullplot.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.18,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.15.20",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
