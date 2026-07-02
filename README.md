@@ -2,7 +2,6 @@
 
 FullPlot is a lightweight HDF5 plotting, trace filtering, and map-generation package for engineering simulation and test data.
 
-FullPlot is intentionally independent from FullFlow. FullPlot does not import FullFlow, and FullFlow does not import FullPlot. HDF5 files are the interface between the two packages.
 
 ## Installation
 
@@ -43,11 +42,11 @@ import fullplot as fplt
 
 run = fplt.open("hotfire.h5")
 
-chpt = run.trace("CHPT", x="time")
-chpt_filtered = chpt.filter("moving_average", window=0.05)
-redline = fplt.Trace.constant("CHPT Redline", x=chpt.x, y=400.0, role="redline")
+pcmc = run.trace("pcmc", x="time")
+pcmc_filtered = pcmc.filter("moving_average", window=0.05)
+redline = fplt.Trace.constant("pcmc Redline", x=pcmc.x, y=400.0, role="redline")
 
-fplt.plot([chpt, chpt_filtered, redline])
+fplt.plot([pcmc, pcmc_filtered, redline])
 ```
 
 ## Generated traces
