@@ -290,7 +290,6 @@ class TimeAxis:
     def __getitem__(self, item):
         return self.values[item]
 
-
 class Trace:
     """A prepared one-dimensional line of data.
 
@@ -375,6 +374,35 @@ class Trace:
             return self.time_axis
         return self.x.copy()
 
+    def _new(
+        self,
+        *,
+        x=None,
+        y=None,
+        name: str | None = None,
+        role: str | None = None,
+        attrs: dict[str, Any] | None = None,
+    ) -> "Trace":
+        """
+        Create a new Trace while preserving user-facing metadata by default.
+
+        FullPlot operations should not invent new display names. If the user
+        wants a new legend name, the user can pass name=... or call renamed(...).
+        """
+        return Trace(
+            x=self._x_for_new_trace() if x is None else x,
+            y=self.y.copy() if y is None else np.asarray(y, dtype=float),
+            name=self.name if name is None else name,
+            role=self.role if role is None else role,
+            attrs=dict(self.attrs) if attrs is None else dict(attrs),
+        )
+
+    def renamed(self, name: str) -> "Trace":
+        """
+        Return a copy of this trace with a new display name.
+        """
+        return self._new(name=name)
+
     @classmethod
     def from_arrays(cls, name: str, x, y, role: str = "data", **attrs) -> "Trace":
         return cls(x=x, y=np.asarray(y, dtype=float), name=name, role=role, attrs=attrs)
@@ -442,6 +470,127 @@ class Trace:
         y_array = np.asarray(function(x_array), dtype=float)
         return cls(x=x_values, y=y_array, name=name, role=role, attrs=attrs)
 
+    def __call__(
+        self,
+        x,
+        *,
+        method: str = "previous",
+        bounds: str = "nan",
+    ):
+        """
+        Sample the trace at one or more x-values.
+
+        By default, this uses the previous available sample, which is useful for
+        sampled test data and solver coupling.
+
+        Examples
+        --------
+        value = trace(3.0)
+
+        values = trace([0.0, 0.1, 0.2])
+
+        value = trace(3.0, method="linear")
+        value = trace(3.0, method="nearest")
+        """
+        return self.value_at(x, method=method, bounds=bounds)
+
+    def value_at(
+        self,
+        x,
+        *,
+        method: str = "previous",
+        bounds: str = "nan",
+    ):
+        """
+        Return the trace value at one or more x-values.
+
+        Parameters
+        ----------
+        x:
+            Scalar x-value or array of x-values.
+
+        method:
+            "previous"
+                Use the last sample at or before x.
+            "linear"
+                Linearly interpolate between samples.
+            "nearest"
+                Use the nearest sample.
+
+        bounds:
+            "nan"
+                Return NaN outside the trace x-range.
+            "clamp"
+                Clamp to the first or last available sample.
+            "raise"
+                Raise an error outside the trace x-range.
+        """
+        x_data = np.asarray(self.x, dtype=float)
+        y_data = np.asarray(self.y, dtype=float)
+
+        finite_x = np.isfinite(x_data)
+        x_data = x_data[finite_x]
+        y_data = y_data[finite_x]
+
+        if x_data.size == 0:
+            raise ValueError(f"Trace {self.name!r} has no finite x-values.")
+
+        query = np.asarray(x, dtype=float)
+        scalar = query.ndim == 0
+        query = np.atleast_1d(query)
+
+        output = np.full(query.shape, np.nan, dtype=float)
+
+        finite_query = np.isfinite(query)
+        inside = finite_query & (query >= x_data[0]) & (query <= x_data[-1])
+
+        if bounds == "raise":
+            outside = finite_query & ~inside
+            if np.any(outside):
+                raise ValueError(
+                    f"Requested x-value outside trace range for {self.name!r}. "
+                    f"Trace range is {x_data[0]} to {x_data[-1]}."
+                )
+            sample_mask = finite_query
+            sample_x = query
+
+        elif bounds == "nan":
+            sample_mask = inside
+            sample_x = query
+
+        elif bounds == "clamp":
+            sample_mask = finite_query
+            sample_x = np.clip(query, x_data[0], x_data[-1])
+
+        else:
+            raise ValueError("bounds must be 'nan', 'clamp', or 'raise'.")
+
+        if method == "previous":
+            indices = np.searchsorted(x_data, sample_x, side="right") - 1
+            indices = np.clip(indices, 0, x_data.size - 1)
+            output[sample_mask] = y_data[indices[sample_mask]]
+
+        elif method == "linear":
+            output[sample_mask] = np.interp(sample_x[sample_mask], x_data, y_data)
+
+        elif method == "nearest":
+            right = np.searchsorted(x_data, sample_x, side="left")
+            right = np.clip(right, 0, x_data.size - 1)
+            left = np.clip(right - 1, 0, x_data.size - 1)
+
+            choose_right = np.abs(x_data[right] - sample_x) < np.abs(sample_x - x_data[left])
+            indices = np.where(choose_right, right, left)
+
+            output[sample_mask] = y_data[indices[sample_mask]]
+
+        else:
+            raise ValueError("method must be 'previous', 'linear', or 'nearest'.")
+
+        if scalar:
+            return float(output[0])
+
+        return output
+
     def copy(self, name: str | None = None, role: str | None = None, copy_time_axis: bool = False, **attrs) -> "Trace":
         merged_attrs = dict(self.attrs)
         merged_attrs.update(attrs)
@@ -479,7 +628,7 @@ class Trace:
         attrs = dict(self.attrs)
         attrs.update({"window_start": start, "window_stop": stop, "window_mode": "nan_mask"})
 
-        return Trace(x=self._x_for_new_trace(), y=y, name=self.name if name is None else name, role=self.role, attrs=attrs)
+        return self._new(y=y, name=name, attrs=attrs)
 
     def omit_missing(self, name: str | None = None) -> "Trace":
         """Return a compact trace containing only finite x/y pairs."""
@@ -488,11 +637,24 @@ class Trace:
         if not np.any(mask):
             raise PlotDataError(f"Trace {self.name!r} has no finite x/y pairs.")
 
-        return Trace(x=self.x[mask], y=self.y[mask], name=self.name if name is None else name, role=self.role, attrs=self.attrs)
+        return Trace(
+            x=self.x[mask],
+            y=self.y[mask],
+            name=self.name if name is None else name,
+            role=self.role,
+            attrs=self.attrs,
+        )
 
     drop_missing = omit_missing
 
-    def filter(self, method: str = "moving_average", window=None, order: int = 2, cutoff: float | None = None, name: str | None = None) -> "Trace":
+    def filter(
+        self,
+        method: str = "moving_average",
+        window=None,
+        order: int = 2,
+        cutoff: float | None = None,
+        name: str | None = None,
+    ) -> "Trace":
         method = str(method).lower().strip().replace("-", "_").replace(" ", "_")
 
         finite_self = self.omit_missing(name=self.name)
@@ -541,22 +703,21 @@ class Trace:
         attrs = dict(self.attrs)
         attrs.update({"filter": method, "window": window, "order": order, "cutoff": cutoff, "source": self.name})
 
-        return Trace(
-            x=self._x_for_new_trace(),
+        return self._new(
             y=np.asarray(y, dtype=float),
-            name=(self.name + " filtered") if name is None else name,
+            name=name,
             role="filtered",
             attrs=attrs,
         )
 
     def scale(self, factor: float, name: str | None = None) -> "Trace":
-        return Trace(x=self._x_for_new_trace(), y=self.y * float(factor), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
+        return self._new(y=self.y * float(factor), name=name)
 
     def offset(self, value: float, name: str | None = None) -> "Trace":
-        return Trace(x=self._x_for_new_trace(), y=self.y + float(value), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
+        return self._new(y=self.y + float(value), name=name)
 
     def derivative(self, name: str | None = None) -> "Trace":
-        return Trace(x=self._x_for_new_trace(), y=np.gradient(self.y, self.x), name=(self.name + " derivative") if name is None else name, role=self.role, attrs=self.attrs)
+        return self._new(y=np.gradient(self.y, self.x), name=name)
 
     def resample(self, x, name: str | None = None) -> "Trace":
         if isinstance(x, TimeAxis):
@@ -565,29 +726,71 @@ class Trace:
         else:
             x_values = _as_1d_numeric_array(x, "resample x", omit_nonfinite=True)
             x_array = x_values
-        return Trace(x=x_values, y=np.interp(x_array, self.x, self.y), name=self.name if name is None else name, role=self.role, attrs=self.attrs)
 
-    def _binary_operation(self, other, operation, symbol: str) -> "Trace":
+        return Trace(
+            x=x_values,
+            y=np.interp(x_array, self.x, self.y),
+            name=self.name if name is None else name,
+            role=self.role,
+            attrs=self.attrs,
+        )
+
+    def _binary_operation(self, other, operation, symbol: str, reverse: bool = False) -> "Trace":
+        attrs = dict(self.attrs)
+        attrs.update({"operation": symbol})
+
         if isinstance(other, Trace):
-            other_y = other.resample(self.x).y
-            name = f"{self.name} {symbol} {other.name}"
-        else:
-            other_y = other
-            name = f"{self.name} {symbol} {other}"
+            if reverse:
+                left_y = other.resample(self.x).y
+                right_y = self.y
+                attrs.update({"left": other.name, "right": self.name})
+            else:
+                left_y = self.y
+                right_y = other.resample(self.x).y
+                attrs.update({"left": self.name, "right": other.name})
 
-        return Trace(x=self._x_for_new_trace(), y=operation(self.y, other_y), name=name, role="derived", attrs={"left": self.name, "operation": symbol})
+            return self._new(
+                y=operation(left_y, right_y),
+                attrs=attrs,
+            )
+
+        other_array = np.asarray(other)
+
+        if reverse:
+            y = operation(other_array, self.y)
+        else:
+            y = operation(self.y, other_array)
+
+        attrs.update({"operand": other_array.item() if other_array.ndim == 0 else "array"})
+
+        return self._new(
+            y=y,
+            attrs=attrs,
+        )
 
     def __add__(self, other):
         return self._binary_operation(other, np.add, "+")
 
+    def __radd__(self, other):
+        return self._binary_operation(other, np.add, "+", reverse=True)
+
     def __sub__(self, other):
         return self._binary_operation(other, np.subtract, "-")
+
+    def __rsub__(self, other):
+        return self._binary_operation(other, np.subtract, "-", reverse=True)
 
     def __mul__(self, other):
         return self._binary_operation(other, np.multiply, "*")
 
+    def __rmul__(self, other):
+        return self._binary_operation(other, np.multiply, "*", reverse=True)
+
     def __truediv__(self, other):
         return self._binary_operation(other, np.divide, "/")
+
+    def __rtruediv__(self, other):
+        return self._binary_operation(other, np.divide, "/", reverse=True)
 
 
 def _is_numeric_dtype(dtype) -> bool:
