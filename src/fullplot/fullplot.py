@@ -1359,7 +1359,7 @@ class H5File:
         theme: str = "dark",
         save: str | Path | None = None,
         dpi: int = 200,
-        show: bool = True,
+        show: bool = False,
         figsize=(9, 5),
         linewidth: float = 1.6,
     ):

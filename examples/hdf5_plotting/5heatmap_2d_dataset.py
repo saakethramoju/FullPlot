@@ -61,7 +61,6 @@ maps.map(
     zlabel="Pressure [Pa]",
     title="Pressure Map from a 2D Dataset",
     save=example_dir / "5heatmap_2d_dataset.png",
-    show=False,
 )
 
 fplt.show()

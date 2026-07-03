@@ -47,7 +47,6 @@ run.plot(
     y2label="Mass Flow [kg/s]",
     title="Pressure and Mass Flow on Separate Axes",
     save=example_dir / "4dual_axis.png",
-    show=False,
 )
 
 fplt.show()

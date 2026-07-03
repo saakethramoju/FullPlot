@@ -38,7 +38,6 @@ run.plot(
     xlabel="Time [s]",
     ylabel="Pressure [Pa]",
     title="Node Pressure",
-    show=False,
 )
 
 
@@ -49,7 +48,6 @@ run.plot(
     xlabel="Time [s]",
     ylabel="Mass Flow [kg/s]",
     title="Mass Flow",
-    show=False,
 )
 
 
@@ -62,7 +60,6 @@ maps.map(
     ylabel="Station [-]",
     zlabel="Temperature [K]",
     title="Temperature Heat Map",
-    show=False,
 )
 
 

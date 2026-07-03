@@ -47,7 +47,6 @@ run.plot(
     ylabel="Pressure [Pa]",
     title="Node Pressure Time History",
     save=example_dir / "2single_trace.png",
-    show=False,
 )
 
 fplt.show()

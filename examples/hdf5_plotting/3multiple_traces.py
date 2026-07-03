@@ -50,7 +50,6 @@ run.plot(
     ylabel="Pressure [Pa]",
     title="Multiple Pressure Traces on One Axis",
     save=example_dir / "3multiple_traces.png",
-    show=False,
 )
 
 fplt.show()

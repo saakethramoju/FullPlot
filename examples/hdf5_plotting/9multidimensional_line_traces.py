@@ -83,7 +83,6 @@ maps.plot(
     ylabel="Pressure [Pa]",
     title="2D Pressure Dataset as Line Traces",
     save=example_dir / "9multidimensional_line_traces.png",
-    show=False,
 )
 
 fplt.show()

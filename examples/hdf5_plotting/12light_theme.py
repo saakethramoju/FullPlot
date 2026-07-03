@@ -43,7 +43,6 @@ run.plot(
     title="Light Theme Plot",
     theme="light",
     save=example_dir / "12light_theme.png",
-    show=False,
 )
 
 fplt.show()

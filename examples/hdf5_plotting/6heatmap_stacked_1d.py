@@ -64,7 +64,6 @@ traces.map(
     zlabel="Pressure [Pa]",
     title="Pressure Heat Map from Separate 1D Datasets",
     save=example_dir / "6heatmap_stacked_1d.png",
-    show=False,
 )
 
 fplt.show()

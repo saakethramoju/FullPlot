@@ -45,7 +45,6 @@ fplt.plot(
     ylabel="Mass Flow [kg/s]",
     title="Module-Level Plot Call",
     save=example_dir / "13module_level_plot.png",
-    show=False,
 )
 
 
@@ -62,7 +61,6 @@ fplt.map(
     zlabel="Temperature [K]",
     title="Module-Level Map Call",
     save=example_dir / "13module_level_map.png",
-    show=False,
 )
 
 fplt.show()

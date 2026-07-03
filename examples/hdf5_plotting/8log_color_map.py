@@ -45,7 +45,6 @@ maps.map(
     title="Heat Map with a Log Color Scale",
     zscale="log",
     save=example_dir / "8log_color_map.png",
-    show=False,
 )
 
 fplt.show()

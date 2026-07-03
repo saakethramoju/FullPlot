@@ -35,7 +35,6 @@ run.plot(
     ylabel="Pressure [Pa]",
     title="Saved as PNG",
     save=example_dir / "14saved_plot.png",
-    show=False,
 )
 
 
@@ -47,7 +46,6 @@ run.plot(
     ylabel="Mass Flow [kg/s]",
     title="Saved as SVG",
     save=example_dir / "14saved_plot.svg",
-    show=False,
 )
 
 fplt.show()

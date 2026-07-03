@@ -52,7 +52,6 @@ log_data.plot(
     title="Frequency Response with a Log X-Axis",
     xscale="log",
     save=example_dir / "7log_x_axis.png",
-    show=False,
 )
 
 
@@ -78,7 +77,6 @@ log_data.plot(
     title="Positive Data on a Log Y-Axis",
     yscale="log",
     save=example_dir / "7log_y_axis.png",
-    show=False,
 )
 
 fplt.show()
