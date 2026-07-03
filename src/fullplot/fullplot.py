@@ -165,13 +165,19 @@ def _line_style_for_role(role: str, theme: str, color, linewidth: float) -> dict
             "alpha": 0.95,
         }
 
-    if role == "filtered":
-        return {"color": color, "linestyle": "--", "linewidth": linewidth}
-
     if role == "command":
-        return {"color": color, "linestyle": "-", "linewidth": linewidth, "drawstyle": "steps-post"}
+        return {
+            "color": color,
+            "linestyle": "-",
+            "linewidth": linewidth,
+            "drawstyle": "steps-post",
+        }
 
-    return {"color": color, "linestyle": "-", "linewidth": linewidth}
+    return {
+        "color": color,
+        "linestyle": "-",
+        "linewidth": linewidth,
+    }
 
 
 @dataclass
@@ -616,11 +622,19 @@ class Trace:
         """
         mask = np.ones_like(self.x, dtype=bool)
 
+        x = np.asarray(self.x, dtype=float)
+
+        if x.size > 1:
+            dx = np.nanmedian(np.diff(x))
+            tol = max(1e-12, abs(dx) * 1e-9)
+        else:
+            tol = 1e-12
+
         if start is not None:
-            mask &= self.x >= float(start)
+            mask &= x >= float(start) - tol
 
         if stop is not None:
-            mask &= self.x <= float(stop)
+            mask &= x <= float(stop) + tol
 
         y = self.y.copy()
         y[~mask] = np.nan
@@ -654,6 +668,7 @@ class Trace:
         order: int = 2,
         cutoff: float | None = None,
         name: str | None = None,
+        role: str | None = None,
     ) -> "Trace":
         method = str(method).lower().strip().replace("-", "_").replace(" ", "_")
 
@@ -661,8 +676,21 @@ class Trace:
 
         if method in {"moving_average", "mean", "average"}:
             count = _trace_window_count(finite_self.x, window, minimum=1)
-            kernel = np.ones(count, dtype=float) / count
-            finite_y = np.convolve(finite_self.y, kernel, mode="same")
+
+            if count <= 1:
+                finite_y = finite_self.y.copy()
+            else:
+                left = count // 2
+                right = count - 1 - left
+
+                padded_y = np.pad(
+                    finite_self.y,
+                    pad_width=(left, right),
+                    mode="edge",
+                )
+
+                kernel = np.ones(count, dtype=float) / count
+                finite_y = np.convolve(padded_y, kernel, mode="valid")
 
         elif method in {"median", "median_filter"}:
             count = _trace_window_count(finite_self.x, window, minimum=3)
@@ -706,7 +734,7 @@ class Trace:
         return self._new(
             y=np.asarray(y, dtype=float),
             name=name,
-            role="filtered",
+            role=role,
             attrs=attrs,
         )
 
