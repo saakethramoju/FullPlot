@@ -8,9 +8,9 @@ A `Trace` is just one reusable line of data:
 Trace(x=array, y=array, name="PCMC_1", role="data")
 ```
 
-It can represent test data, simulation data, filtered data, redlines, bluelines,
-commands, sequence states, derived quantities, or anything else that can be drawn
-as one line.
+It can represent test data, simulation data, redlines, bluelines, yellowlines,
+greenlines, commands, sequence states, or anything else that can be drawn as one
+line. Filtered and math-derived traces keep the role of their source trace.
 
 ## Example order
 

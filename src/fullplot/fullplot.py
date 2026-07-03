@@ -42,6 +42,19 @@ class PlotDataError(FullPlotError):
     """Raised when selected data cannot be plotted."""
 
 
+VALID_TRACE_ROLES = ("data", "redline", "blueline", "yellowline", "greenline", "command")
+
+
+def _normalize_trace_role(role: str | None) -> str:
+    role = str(role or "data").lower().strip()
+
+    if role not in VALID_TRACE_ROLES:
+        valid = ", ".join(repr(item) for item in VALID_TRACE_ROLES)
+        raise ValueError(f"Invalid trace role {role!r}. Valid roles are: {valid}.")
+
+    return role
+
+
 @dataclass
 class LineSeries:
     data: np.ndarray
@@ -136,16 +149,12 @@ def _role_color(role: str, theme: str):
             "redline": "#ff7a7a",
             "blueline": "#7ab8ff",
             "yellowline": "#ffd36a",
-            "amberline": "#ffd36a",
-            "warning": "#ffd36a",
             "greenline": "#6aff9a",
         },
         "light": {
             "redline": "#7f1d1d",
             "blueline": "#245a9a",
             "yellowline": "#a87900",
-            "amberline": "#a87900",
-            "warning": "#a87900",
             "greenline": "#1c6b3f",
         },
     }
@@ -154,23 +163,23 @@ def _role_color(role: str, theme: str):
 
 
 def _line_style_for_role(role: str, theme: str, color, linewidth: float) -> dict:
-    role = str(role or "data").lower().strip()
+    role = _normalize_trace_role(role)
     line_color = _role_color(role, theme)
 
-    if role in {"redline", "blueline", "yellowline", "amberline", "warning", "greenline"}:
+    if role == "command":
+        return {
+            "color": color,
+            "linestyle": "-.",
+            "linewidth": linewidth,
+            "drawstyle": "steps-post",
+        }
+
+    if role in {"redline", "blueline", "yellowline", "greenline"}:
         return {
             "color": line_color,
             "linestyle": "--",
             "linewidth": 1.15 * linewidth,
             "alpha": 0.95,
-        }
-
-    if role == "command":
-        return {
-            "color": color,
-            "linestyle": "-",
-            "linewidth": linewidth,
-            "drawstyle": "steps-post",
         }
 
     return {
@@ -300,9 +309,11 @@ class Trace:
     """A prepared one-dimensional line of data.
 
     A Trace is intentionally generic. It can represent simulation output, test
-    data, a filtered signal, a command, a redline, a blueline, or any other
-    one-dimensional data series. FullPlot uses it for overlaying data from
-    different files and for generated lines that do not already exist in HDF5.
+    data, a command, a redline, a blueline, a yellowline, a greenline, or any
+    other one-dimensional data series. Filtered, scaled, windowed, resampled,
+    and math-derived traces keep the source trace role unless role=... is
+    explicitly passed. FullPlot uses traces for overlaying data from different
+    files and for generated lines that do not already exist in HDF5.
 
     If x is a TimeAxis, the trace keeps a reference to that TimeAxis. Shifting
     the TimeAxis then shifts this trace and every other trace sharing it.
@@ -342,7 +353,7 @@ class Trace:
                 self.y = self.y[mask]
 
         self.name = str(name)
-        self.role = str(role or "data")
+        self.role = _normalize_trace_role(role)
         self.attrs = {} if attrs is None else dict(attrs)
 
     @property
@@ -1287,7 +1298,7 @@ class H5File:
         slice=None,
         axis: int = -1,
         name: str | None = None,
-        role: str = "data",
+        role: str | None = None,
     ) -> Trace:
         """Read one HDF5 dataset as a reusable Trace."""
 
@@ -1342,7 +1353,7 @@ class H5File:
             x=x_values,
             y=series_item.data,
             name=series_item.label if name is None else name,
-            role=role,
+            role="data" if role is None else role,
             attrs={"source_file": self.filename, "source_root": self.root, "source_dataset": str(y)},
         )
 

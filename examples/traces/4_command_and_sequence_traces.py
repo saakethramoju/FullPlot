@@ -1,7 +1,7 @@
 """
 Plot command traces from HDF5 and create new command traces from points.
 
-role="command" uses a step-style plot. Trace.from_points(..., mode="previous")
+role="command" uses a dash-dot step-style plot. Trace.from_points(..., mode="previous")
 is useful for commands, valve positions, sequence states, and on/off histories.
 """
 

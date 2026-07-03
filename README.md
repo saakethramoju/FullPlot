@@ -35,7 +35,7 @@ run.plot(
 
 ## Traces
 
-A `Trace` is a generic one-dimensional line of data. It can represent simulation data, test data, a filtered trace, a redline, a blueline, a command trace, or a derived trace.
+A `Trace` is a generic one-dimensional line of data. It can represent simulation data, test data, a redline, a blueline, a yellowline, a greenline, or a command trace. Filtered and math-derived traces keep the role of their source trace.
 
 FullPlot does not have a special test-data object. If your HDF5 file contains normal datasets such as `time`, `PCMC_1`, `PBTC_1`, and `SHAFT_RPM_1`, you can plot them directly:
 
@@ -70,7 +70,7 @@ fplt.plot([pcmc, pcmc_filtered, redline])
 
 ## Generated traces and roles
 
-Trace roles are only plotting hints. They do not implement abort logic or limit checking. The special role colors are intentionally slightly different from the normal line-color cycle in light and dark themes so redlines, bluelines, warning lines, and ordinary data traces are not confused.
+Trace roles are only plotting hints. They do not implement abort logic or limit checking. Valid roles are `"data"`, `"redline"`, `"blueline"`, `"yellowline"`, `"greenline"`, and `"command"`. Data traces are solid, limit/reference traces are dashed, and command traces use a dash-dot step style.
 
 ```python
 import fullplot as fplt
@@ -90,7 +90,7 @@ command = fplt.Trace.from_points(
 fplt.plot([pcmc, redline, yellowline, blueline, command])
 ```
 
-See `examples/traces/` for detailed examples covering generated sensor data, filtering, redlines/bluelines, commands, trace math, resampling, derivatives, saving processed traces, and missing-value handling.
+See `examples/traces/` for detailed examples covering generated sensor data, filtering, redlines/bluelines/yellowlines/greenlines, commands, trace math, resampling, derivatives, saving processed traces, and missing-value handling.
 
 ## Map generation
 
