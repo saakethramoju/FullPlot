@@ -2072,10 +2072,38 @@ class H5File:
             )
 
         return array, name
+        
+
+
+def _resolve_hdf5_read_filename(filename: str | Path) -> str:
+    """Return an existing HDF5 filename, trying .h5 when no suffix is given."""
+    path = Path(filename)
+
+    # Respect exact filenames first. This avoids breaking users who really do
+    # have an extensionless HDF5 file.
+    if path.exists():
+        return str(path)
+
+    # Convenience behavior:
+    #
+    #     fplt.open("run")
+    #
+    # should open "run.h5" if that is what FullFlow wrote.
+    if path.suffix == "":
+        h5_path = path.with_suffix(".h5")
+
+        if h5_path.exists():
+            return str(h5_path)
+
+        # Return the .h5 candidate anyway so the eventual FileNotFoundError
+        # points at the filename FullPlot actually tried to open.
+        return str(h5_path)
+
+    return str(path)
 
 
 def open(filename: str | Path, root: str = "/") -> H5File:
-    return H5File(filename=filename, root=root)
+    return H5File(filename=_resolve_hdf5_read_filename(filename), root=root)
 
 
 def tree(filename: str | Path, root: str = "/", **kwargs) -> str:
