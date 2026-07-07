@@ -1,9 +1,10 @@
 [project]
 name = "fullplot"
-version = "0.0.1"
-description = "A lightweight HDF5 trace plotting, filtering, and map-generation helper for engineering data."
+version = "0.1.0"
+description = "A documented HDF5 plotting, trace-processing, and map-generation package for engineering simulation and test data."
 readme = "README.md"
 license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 authors = [
     { name = "Saaketh Ramoju", email = "skramoju@gmail.com" }
 ]
@@ -18,9 +19,10 @@ keywords = [
     "scientific-computing",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Education",
+    "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -28,6 +30,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
     "numpy>=1.26.0",
@@ -40,10 +43,16 @@ dependencies = [
 Homepage = "https://github.com/saakethramoju/FullPlot"
 Repository = "https://github.com/saakethramoju/FullPlot"
 Issues = "https://github.com/saakethramoju/FullPlot/issues"
+Changelog = "https://github.com/saakethramoju/FullPlot/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/saakethramoju/FullPlot#readme"
 PyPI = "https://pypi.org/project/fullplot/"
 
 [project.scripts]
 fullplot = "fullplot.cli:main"
+
+[tool.uv.build-backend]
+module-name = "fullplot"
+source-include = ["CHANGELOG.md", "LICENSE", "PUBLISHING.md", "THIRD_PARTY_LICENSES.md", "examples/**", "tests/**"]
 
 [build-system]
 requires = ["uv_build>=0.11.18,<0.12.0"]

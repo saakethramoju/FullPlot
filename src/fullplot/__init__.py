@@ -1,6 +1,11 @@
-"""FullPlot: lightweight HDF5 trace plotting, filtering, and map generation."""
+"""FullPlot public package interface.
 
-from importlib.metadata import PackageNotFoundError, version
+FullPlot is a small engineering-data plotting package centered on HDF5 files,
+reusable one-dimensional ``Trace`` objects, shared ``TimeAxis`` objects, and
+rectangular-grid map generation. Most users import the package as ``fullplot``
+or ``fplt`` and use the names re-exported here instead of importing from the
+internal modules directly.
+"""
 
 from fullplot.cli import main
 from fullplot.fullplot import (
@@ -32,10 +37,7 @@ from fullplot.maps import (
     generate_map,
 )
 
-try:
-    __version__ = version("fullplot")
-except PackageNotFoundError:
-    __version__ = "0.0.0"
+__version__ = "0.1.0"
 
 __all__ = [
     "__version__",

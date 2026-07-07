@@ -1,3 +1,10 @@
+"""Matplotlib theme helpers used by FullPlot plotting functions.
+
+The theme layer is intentionally tiny: FullPlot only ships a dark engineering
+scope-style theme and a light report-style theme. These helpers keep style
+selection consistent across line plots, map plots, legends, and colorbars.
+"""
+
 from __future__ import annotations
 
 
@@ -29,6 +36,12 @@ LIGHT_COLORS = [
 
 
 def check_theme(theme: str) -> str:
+    """Validate and normalize a FullPlot theme name.
+
+    Supported themes are ``"dark"`` and ``"light"``. The comparison is
+    case-insensitive and trims surrounding whitespace. A ``ValueError`` is raised
+    for unknown names so invalid style choices fail before a figure is created.
+    """
     theme = str(theme).lower().strip()
 
     if theme not in ("dark", "light"):
@@ -38,6 +51,7 @@ def check_theme(theme: str) -> str:
 
 
 def theme_colors(theme: str):
+    """Return the default line-color cycle for a FullPlot theme."""
     theme = check_theme(theme)
 
     if theme == "dark":
@@ -47,6 +61,13 @@ def theme_colors(theme: str):
 
 
 def theme_settings(theme: str):
+    """Return Matplotlib styling parameters for a FullPlot theme.
+
+    The returned dictionary is used internally by ``apply_theme``,
+    ``grid_kwargs``, ``style_legend``, and ``style_colorbar``. It is public so
+    advanced users can inspect the chosen colors or use the same style in custom
+    Matplotlib code.
+    """
     theme = check_theme(theme)
 
     if theme == "dark":
@@ -90,6 +111,12 @@ def theme_settings(theme: str):
 
 
 def apply_theme(fig, axes, theme: str):
+    """Apply a FullPlot theme to a Matplotlib figure and one or more axes.
+
+    Parameters are intentionally untyped so the helper can accept normal axes,
+    twin axes, and small lists of axes from Matplotlib without forcing a hard
+    dependency on Matplotlib typing internals.
+    """
     settings = theme_settings(theme)
     colors = theme_colors(theme)
 
@@ -131,6 +158,7 @@ def apply_theme(fig, axes, theme: str):
 
 
 def grid_kwargs(theme: str):
+    """Return keyword arguments for ``Axes.grid`` under a FullPlot theme."""
     settings = theme_settings(theme)
 
     return {
@@ -142,6 +170,7 @@ def grid_kwargs(theme: str):
 
 
 def style_legend(legend, theme: str):
+    """Apply FullPlot theme colors and fonts to a Matplotlib legend."""
     if legend is None:
         return
 
@@ -158,6 +187,7 @@ def style_legend(legend, theme: str):
 
 
 def style_colorbar(colorbar, theme: str):
+    """Apply FullPlot theme colors and fonts to a Matplotlib colorbar."""
     settings = theme_settings(theme)
 
     colorbar.ax.yaxis.label.set_color(settings["text_color"])

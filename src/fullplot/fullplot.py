@@ -57,6 +57,14 @@ def _normalize_trace_role(role: str | None) -> str:
 
 @dataclass
 class LineSeries:
+    """Internal description of one plotted line series.
+
+    ``LineSeries`` is created after HDF5 selection, slicing, and trace expansion
+    have reduced user inputs to one-dimensional arrays ready for Matplotlib. It
+    is kept public-looking only because it is a small dataclass in this module;
+    users normally interact with :class:`Trace` and :class:`H5File` instead.
+    """
+
     data: np.ndarray
     label: str
     length: int
@@ -191,11 +199,28 @@ def _line_style_for_role(role: str, theme: str, color, linewidth: float) -> dict
 
 @dataclass
 class TimeAxis:
-    """A shared, shiftable time axis for related traces.
+    """Shared, shiftable time basis for related traces.
 
-    TimeAxis stores the original HDF5 time samples and a mutable zero point.
-    Traces can share one TimeAxis object, so changing the zero point shifts the
-    time basis for every trace that was built from that axis.
+    ``TimeAxis`` stores the original time samples from an HDF5 dataset or a user
+    supplied array and applies a mutable zero-time offset when values are read.
+    A single ``TimeAxis`` can be shared by many ``Trace`` objects, which makes it
+    convenient to align test data and simulation data without copying every
+    trace.
+
+    Parameters
+    ----------
+    raw:
+        One-dimensional, strictly increasing time values in the source data
+        units. FullPlot normally uses seconds, but no unit conversion is
+        performed.
+    name:
+        Human-readable axis name, usually the HDF5 dataset basename such as
+        ``"time"``.
+    zero:
+        Raw data value that should be displayed as zero. The shifted values are
+        always ``raw - zero``.
+    attrs:
+        Optional metadata copied from the HDF5 dataset or supplied by the user.
     """
 
     raw: np.ndarray
@@ -218,74 +243,87 @@ class TimeAxis:
 
     @property
     def values(self) -> np.ndarray:
-        """Return the current shifted time values."""
+        """Return the current shifted time values as ``raw - zero``."""
         return self.raw - self.zero
 
     @property
     def value(self) -> np.ndarray:
-        """Alias for values."""
+        """Alias for :attr:`values` for consistency with ``Trace.value``."""
         return self.values
 
     @property
     def time(self) -> np.ndarray:
-        """Alias for values."""
+        """Alias for :attr:`values` for code that expects a time attribute."""
         return self.values
 
     @property
     def count(self) -> int:
+        """Number of raw time samples in the axis."""
         return int(self.raw.size)
 
     @property
     def tmin(self) -> float:
+        """First shifted time value."""
         return float(self.values[0])
 
     @property
     def tmax(self) -> float:
+        """Last shifted time value."""
         return float(self.values[-1])
 
     @property
     def raw_tmin(self) -> float:
+        """First unshifted source time value."""
         return float(self.raw[0])
 
     @property
     def raw_tmax(self) -> float:
+        """Last unshifted source time value."""
         return float(self.raw[-1])
 
     @property
     def duration(self) -> float:
+        """Unshifted time span covered by the axis."""
         if self.raw.size < 2:
             return 0.0
         return float(self.raw[-1] - self.raw[0])
 
     @property
     def dt_array(self) -> np.ndarray:
+        """Array of adjacent raw-sample spacings."""
         return np.diff(self.raw)
 
     @property
     def dt(self) -> float:
-        """Return the nominal timestep, using the median for nonuniform data."""
+        """Nominal timestep, computed as the median adjacent spacing."""
         if self.raw.size < 2:
             return float("nan")
         return float(np.median(self.dt_array))
 
     @property
     def is_uniform(self) -> bool:
+        """Whether the raw samples are approximately uniformly spaced."""
         if self.raw.size < 3:
             return True
         dt = self.dt_array
         return bool(np.allclose(dt, np.median(dt), rtol=1e-6, atol=1e-12))
 
     def zero_at(self, time: float) -> "TimeAxis":
-        """Shift the time basis so the given raw data time becomes t = 0."""
+        """Shift the time basis so ``time`` in raw data appears as ``t = 0``."""
         self.zero = float(time)
         return self
 
     def align(self, data_time: float, model_time: float = 0.0) -> "TimeAxis":
-        """Shift the time basis so data_time maps to model_time."""
+        """Shift the axis so one raw data time aligns with one model time.
+
+        For example, ``axis.align(data_time=95.0, model_time=0.0)`` makes raw
+        test time 95 seconds appear at simulation time zero.
+        """
         self.zero = float(data_time) - float(model_time)
         return self
 
     def copy(self, name: str | None = None) -> "TimeAxis":
+        """Return an independent copy preserving the current zero offset."""
         return TimeAxis(
             raw=self.raw.copy(),
             name=self.name if name is None else name,
@@ -306,17 +344,32 @@ class TimeAxis:
         return self.values[item]
 
 class Trace:
-    """A prepared one-dimensional line of data.
+    """Prepared one-dimensional engineering data series.
 
-    A Trace is intentionally generic. It can represent simulation output, test
-    data, a command, a redline, a blueline, a yellowline, a greenline, or any
-    other one-dimensional data series. Filtered, scaled, windowed, resampled,
-    and math-derived traces keep the source trace role unless role=... is
-    explicitly passed. FullPlot uses traces for overlaying data from different
-    files and for generated lines that do not already exist in HDF5.
+    A ``Trace`` pairs one x-array with one y-array and enough metadata to make
+    the line reusable outside the original HDF5 file. It can represent raw test
+    data, simulation output, filtered data, redlines, bluelines, yellowlines,
+    greenlines, command traces, derived traces, or any other one-dimensional
+    quantity. FullPlot roles only affect plotting style; they do not implement
+    controller logic, abort logic, or unit conversion.
 
-    If x is a TimeAxis, the trace keeps a reference to that TimeAxis. Shifting
-    the TimeAxis then shifts this trace and every other trace sharing it.
+    Parameters
+    ----------
+    x:
+        One-dimensional x values or a :class:`TimeAxis`. When a ``TimeAxis`` is
+        supplied, the trace keeps a reference to it so later calls to
+        ``time_axis.zero_at(...)`` shift all traces sharing that axis.
+    y:
+        One-dimensional y values. Non-finite y-values are preserved so missing
+        test-data samples appear as plot gaps instead of being silently removed.
+    name:
+        Display name used in legends and HDF5 trace-writing output.
+    role:
+        Plotting role. Supported roles are ``"data"``, ``"redline"``,
+        ``"blueline"``, ``"yellowline"``, ``"greenline"``, and ``"command"``.
+    attrs:
+        Optional user metadata. FullPlot stores this metadata when traces are
+        written with :func:`write_traces`.
     """
 
     def __init__(
@@ -358,32 +411,39 @@ class Trace:
 
     @property
     def x(self) -> np.ndarray:
+        """Current x-values for the trace, including any shared TimeAxis shift."""
         if self.time_axis is not None:
             return self.time_axis.values
         return self._x
 
     @property
     def time(self) -> np.ndarray:
+        """Alias for :attr:`x` when the trace represents time-series data."""
         return self.x
 
     @property
     def value(self) -> np.ndarray:
+        """Alias for the trace y-values."""
         return self.y
 
     @property
     def finite(self) -> np.ndarray:
+        """Boolean mask where both x and y are finite."""
         return np.isfinite(self.x) & np.isfinite(self.y)
 
     @property
     def tmin(self) -> float:
+        """First x-value in the current trace coordinate system."""
         return float(self.x[0])
 
     @property
     def tmax(self) -> float:
+        """Last x-value in the current trace coordinate system."""
         return float(self.x[-1])
 
     @property
     def time_range(self) -> tuple[float, float]:
+        """Tuple of ``(tmin, tmax)`` for quick range checks."""
         return self.tmin, self.tmax
 
     def _x_for_new_trace(self):
@@ -422,10 +482,22 @@ class Trace:
 
     @classmethod
     def from_arrays(cls, name: str, x, y, role: str = "data", **attrs) -> "Trace":
+        """Create a trace directly from explicit x/y arrays.
+
+        This is equivalent to calling ``Trace(x=x, y=y, name=name, ...)`` but
+        reads more clearly in scripts that generate traces from NumPy arrays.
+        Extra keyword arguments are stored as trace metadata.
+        """
         return cls(x=x, y=np.asarray(y, dtype=float), name=name, role=role, attrs=attrs)
 
     @classmethod
     def constant(cls, name: str, x, y: float, role: str = "data", **attrs) -> "Trace":
+        """Create a constant-valued trace over an existing x-axis.
+
+        This is the usual helper for redlines, bluelines, yellowlines,
+        greenlines, targets, setpoints, and other constant references. If ``x``
+        is a ``TimeAxis``, the new trace shares that time axis.
+        """
         if isinstance(x, TimeAxis):
             x_values = x
             y_array = np.full(len(x), float(y), dtype=float)
@@ -436,6 +508,13 @@ class Trace:
 
     @classmethod
     def from_points(cls, name: str, points, x=None, mode: str = "linear", role: str = "data", **attrs) -> "Trace":
+        """Create a trace by interpolating or holding a list of ``(x, y)`` points.
+
+        ``mode="linear"`` linearly interpolates between points.
+        ``mode="previous"`` creates a previous-value hold, which is useful for
+        commands, valve schedules, controller setpoints, and sequence states. If
+        ``x`` is omitted, the point x-values are used directly.
+        """
         points = np.asarray(points, dtype=float)
 
         if points.ndim != 2 or points.shape[1] != 2:
@@ -478,6 +557,12 @@ class Trace:
 
     @classmethod
     def from_function(cls, name: str, x, function, role: str = "data", **attrs) -> "Trace":
+        """Create a trace by evaluating ``function(x_array)``.
+
+        The function should accept a NumPy array and return a same-length array
+        or array-like object. This is useful for analytic references, synthetic
+        simulation curves, and generated limits that are not constant.
+        """
         if isinstance(x, TimeAxis):
             x_values = x
             x_array = x.values
@@ -609,6 +694,12 @@ class Trace:
         return output
 
     def copy(self, name: str | None = None, role: str | None = None, copy_time_axis: bool = False, **attrs) -> "Trace":
+        """Return a copy of the trace with optional name, role, and metadata changes.
+
+        By default, a trace sharing a ``TimeAxis`` continues to share that same
+        axis. Set ``copy_time_axis=True`` when the copied trace should have an
+        independent zero offset.
+        """
         merged_attrs = dict(self.attrs)
         merged_attrs.update(attrs)
         x_values = self._x_for_new_trace()
@@ -681,6 +772,15 @@ class Trace:
         name: str | None = None,
         role: str | None = None,
     ) -> "Trace":
+        """Return a filtered copy of the trace.
+
+        Supported methods are ``"moving_average"``, ``"median"``,
+        ``"savgol"``/``"savitzky_golay"``, and ``"lowpass"``. ``window`` may
+        be an integer sample count or a positive x-width for the windowed
+        filters. ``cutoff`` is required for the low-pass filter and is expressed
+        in cycles per x-unit, normally Hz when x is seconds. Missing y-values are
+        omitted during filtering and restored as ``NaN`` in the returned trace.
+        """
         method = str(method).lower().strip().replace("-", "_").replace(" ", "_")
 
         finite_self = self.omit_missing(name=self.name)
@@ -750,15 +850,25 @@ class Trace:
         )
 
     def scale(self, factor: float, name: str | None = None) -> "Trace":
+        """Return a trace with all y-values multiplied by ``factor``."""
         return self._new(y=self.y * float(factor), name=name)
 
     def offset(self, value: float, name: str | None = None) -> "Trace":
+        """Return a trace with ``value`` added to every y-sample."""
         return self._new(y=self.y + float(value), name=name)
 
     def derivative(self, name: str | None = None) -> "Trace":
+        """Return a numerical derivative ``dy/dx`` trace using ``np.gradient``."""
         return self._new(y=np.gradient(self.y, self.x), name=name)
 
     def resample(self, x, name: str | None = None) -> "Trace":
+        """Interpolate the trace onto a new x-array or ``TimeAxis``.
+
+        Resampling uses ``np.interp`` and therefore performs one-dimensional
+        linear interpolation. Values outside the original x-range are clamped by
+        NumPy's default behavior. Use :meth:`value_at` when explicit out-of-bounds
+        behavior is required.
+        """
         if isinstance(x, TimeAxis):
             x_values = x
             x_array = x.values
@@ -1088,6 +1198,16 @@ def _apply_slice_for_map(array: np.ndarray, slice_spec) -> np.ndarray:
 
 @dataclass
 class H5File:
+    """Handle for inspecting and plotting one HDF5 file or root group.
+
+    Users normally create this object with :func:`open`. The object stores a
+    filename and an HDF5 root path. Methods resolve short names, relative paths,
+    and absolute paths under that root, then return trees, dataset lists, scalar
+    values, reusable traces, line plots, or heat maps. The file is opened only
+    for each operation, so the object is lightweight and safe to keep around in
+    scripts.
+    """
+
     filename: str | Path
     root: str = "/"
 
@@ -1113,8 +1233,10 @@ class H5File:
         return H5File(self.filename, group_path)
 
     def tree(self, max_depth: int | None = None, print_output: bool = True) -> str:
-        """
-        Print the HDF5 tree under the current root.
+        """Return a formatted tree of groups and datasets below the current root.
+
+        Set ``print_output=False`` to collect the string without printing it.
+        ``max_depth`` limits recursion depth and is useful for large files.
         """
 
         with h5py.File(self.filename, "r") as h5:
@@ -1144,8 +1266,12 @@ class H5File:
         return text
 
     def list(self, print_output: bool = True) -> str:
-        """
-        Print numeric and non-numeric datasets under the current root.
+        """Return a categorized list of datasets under the current root.
+
+        Datasets are grouped into 1D numeric, 2D numeric, multidimensional
+        numeric, scalar numeric, and non-numeric sections. This is the fastest
+        way to decide whether to call ``plot()``, ``map()``, ``trace()``, or
+        ``read()`` on a new file.
         """
 
         with h5py.File(self.filename, "r") as h5:
@@ -1211,8 +1337,11 @@ class H5File:
         return text
 
     def values(self, group: str | None = None, print_output: bool = True) -> dict[str, Any]:
-        """
-        Read scalar datasets under the current root or under a selected group.
+        """Read scalar datasets under the current root or a selected group.
+
+        FullPlot treats scalar datasets as metadata-like values, such as a run
+        setting, constant, or map attribute stored as a dataset. Non-scalar
+        datasets are ignored by this method.
         """
 
         with h5py.File(self.filename, "r") as h5:
@@ -1251,8 +1380,11 @@ class H5File:
         return values
 
     def read(self, name: str):
-        """
-        Read a dataset by absolute path, relative path, or unique short name.
+        """Read one dataset by absolute path, relative path, or unique short name.
+
+        The returned object is the raw NumPy value from ``h5py``. Use
+        ``trace()`` or ``time()`` when the dataset should become a FullPlot
+        object with validation and metadata.
         """
 
         with h5py.File(self.filename, "r") as h5:
@@ -1260,7 +1392,11 @@ class H5File:
             return h5[path][()]
 
     def time(self, name: str = "time") -> TimeAxis:
-        """Read one HDF5 dataset as a shared, shiftable TimeAxis."""
+        """Read a one-dimensional HDF5 dataset as a shared ``TimeAxis``.
+
+        The returned axis can be passed to ``trace(..., x=time_axis)`` and later
+        shifted with ``zero_at`` or ``align``.
+        """
 
         with h5py.File(self.filename, "r") as h5:
             path = self._resolve_dataset_path(h5, name)
@@ -1300,7 +1436,14 @@ class H5File:
         name: str | None = None,
         role: str | None = None,
     ) -> Trace:
-        """Read one HDF5 dataset as a reusable Trace."""
+        """Read one HDF5 dataset or selected slice as a reusable ``Trace``.
+
+        ``y`` may be a dataset path/name or an existing ``Trace``. ``x`` may be
+        omitted, a dataset path/name, an array-like object, a ``Trace`` whose
+        y-values are used as x-values, or a shared ``TimeAxis``. Multidimensional
+        y-data must reduce to exactly one one-dimensional trace after applying
+        ``slice`` and ``axis``.
+        """
 
         if isinstance(y, Trace):
             return y.copy(name=name, role=role)
@@ -1313,16 +1456,22 @@ class H5File:
                 if isinstance(x, TimeAxis):
                     x_values = x
                     x_array = x.values
-                else:
+                elif isinstance(x, Trace):
+                    x_values = x.y
+                    x_array = x.y
+                elif isinstance(x, str):
                     x_path = self._resolve_dataset_path(h5, x)
                     x_array = np.asarray(h5[x_path][()])
                     x_values = x_array
+                else:
+                    x_array = np.asarray(x)
+                    x_values = x_array
 
-                    if x_array.ndim != 1:
-                        raise PlotDataError("x must be a 1D dataset.")
+                if x_array.ndim != 1:
+                    raise PlotDataError("x must be a 1D dataset, array, TimeAxis, or Trace.")
 
-                    if not _is_numeric_dtype(x_array.dtype):
-                        raise PlotDataError("x must be numeric.")
+                if not _is_numeric_dtype(x_array.dtype):
+                    raise PlotDataError("x must be numeric.")
 
             series = self._build_line_series(
                 h5=h5,
@@ -1402,7 +1551,15 @@ class H5File:
         figsize=(9, 5),
         linewidth: float = 1.6,
     ):
-        """Plot HDF5 datasets and/or Trace objects."""
+        """Plot HDF5 datasets and/or ``Trace`` objects.
+
+        ``y`` selects one or more left-axis traces, while ``y2`` selects optional
+        right-axis traces. Dataset selectors can be absolute paths, paths
+        relative to the current root, or unique short names. Trace roles control
+        default line style for data, limits, references, and command traces. The
+        function returns the Matplotlib figure and axes so callers can add custom
+        annotations before showing or saving.
+        """
 
         theme = check_theme(theme)
 
@@ -2103,30 +2260,42 @@ def _resolve_hdf5_read_filename(filename: str | Path) -> str:
 
 
 def open(filename: str | Path, root: str = "/") -> H5File:
+    """Open an HDF5 file for FullPlot inspection and plotting.
+
+    The file is not held open; the returned ``H5File`` stores the filename and
+    root group and opens the file for each operation. If ``filename`` has no
+    suffix, FullPlot first looks for an exact file and then tries ``.h5``.
+    """
     return H5File(filename=_resolve_hdf5_read_filename(filename), root=root)
 
 
 def tree(filename: str | Path, root: str = "/", **kwargs) -> str:
+    """Convenience wrapper for ``open(filename, root).tree(...)``."""
     return open(filename, root=root).tree(**kwargs)
 
 
 def list_h5(filename: str | Path, root: str = "/", **kwargs) -> str:
+    """Convenience wrapper for ``open(filename, root).list(...)``."""
     return open(filename, root=root).list(**kwargs)
 
 
 def read(filename: str | Path, name: str, root: str = "/"):
+    """Read one HDF5 dataset without explicitly creating an ``H5File`` object."""
     return open(filename, root=root).read(name)
 
 
 def time(filename: str | Path, name: str = "time", root: str = "/") -> TimeAxis:
+    """Read one HDF5 time dataset as a shared ``TimeAxis``."""
     return open(filename, root=root).time(name)
 
 
 def values(filename: str | Path, root: str = "/", group: str | None = None, **kwargs):
+    """Read scalar datasets from a file, root, or selected group."""
     return open(filename, root=root).values(group=group, **kwargs)
 
 
 def trace(filename: str | Path, y, x=None, root: str = "/", **kwargs) -> Trace:
+    """Read one dataset from a file as a reusable ``Trace``."""
     return open(filename, root=root).trace(y=y, x=x, **kwargs)
 
 
@@ -2153,6 +2322,7 @@ def plot(filename_or_traces=None, y=None, x=None, root: str = "/", **kwargs):
 
 
 def map(filename: str | Path, z, root: str = "/", **kwargs):
+    """Plot a 2D HDF5 dataset or stacked 1D datasets as a heat map."""
     return open(filename, root=root).map(z=z, **kwargs)
 
 

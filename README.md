@@ -1,7 +1,47 @@
 # FullPlot
 
-FullPlot is a lightweight HDF5 plotting, trace filtering, and map-generation package for engineering simulation and test data.
+[![PyPI version](https://img.shields.io/pypi/v/fullplot)](https://pypi.org/project/fullplot/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/fullplot/)
+[![License](https://img.shields.io/pypi/l/fullplot)](https://github.com/saakethramoju/FullPlot)
 
+FullPlot is a lightweight HDF5 plotting, trace-processing, and map-generation package for engineering simulation and test data.
+
+It is designed for workflows where the data is already in HDF5 and the user wants a simple Python interface for inspecting, plotting, filtering, aligning, and saving engineering traces without building a large application around the file format.
+
+FullPlot is especially useful for:
+
+* simulation outputs stored in HDF5,
+* rocket-engine and test-stand time histories,
+* generic sensor data,
+* controller commands and sequence traces,
+* redline, blueline, yellowline, and greenline overlays,
+* quick HDF5 inspection,
+* 1D trace overlays,
+* dual-axis plots,
+* 2D heat maps,
+* multidimensional dataset slicing,
+* simple rectangular-grid map generation for downstream tools such as FullFlow.
+
+FullPlot does **not** require a special FullFlow file format. If your HDF5 file contains normal numeric datasets, FullPlot can inspect and plot them.
+
+---
+
+## Repository status for 0.1.0
+
+FullPlot 0.1.0 is prepared as the first publish-ready public release of the package.
+
+There is no separate official documentation site yet, so the repository is intentionally documentation-heavy:
+
+* `README.md` is the primary user guide.
+* `CHANGELOG.md` records release-level changes and bug fixes.
+* `PUBLISHING.md` records the build, smoke-test, artifact-inspection, and upload checklist.
+* `THIRD_PARTY_LICENSES.md` records dependency and license notes.
+* `examples/` contains detailed runnable examples.
+* Public classes, functions, properties, and exceptions include docstrings so `help(fullplot.Trace)`, IDE inspection, and future generated API docs are useful immediately.
+
+The 0.1.0 release focuses on documentation, packaging, smoke testing, public API docstrings, and fixing obvious publish-blocking bugs. The core plotting, trace, and map-generation model is intentionally small.
+
+---
 
 ## Installation
 
@@ -9,92 +49,624 @@ FullPlot is a lightweight HDF5 plotting, trace filtering, and map-generation pac
 pip install fullplot
 ```
 
-For local development with `uv`:
+FullPlot requires Python 3.11 or newer.
+
+For local development from the repository:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python -m pytest
+```
+
+With `uv`:
 
 ```bash
 uv sync --dev
 uv run pytest
 ```
 
-## Quick plotting
+---
+
+## Quick start
+
+Create or open an HDF5 file that contains a `time` dataset and one or more numeric channels:
+
+```text
+hotfire.h5
+├── time
+├── PCMC_1
+├── PCMC_2
+├── PCMC_3
+├── OIPT
+├── FIPT
+├── PBTC_1
+└── MOV_CMD
+```
+
+Plot a single trace:
 
 ```python
 import fullplot as fplt
 
-run = fplt.open("engine_sim.h5")
-run.tree()
-run.list()
+run = fplt.open("hotfire.h5")
 
 run.plot(
     x="time",
-    y="node_pressure",
+    y="PCMC_1",
     xlabel="Time [s]",
-    ylabel="Pressure [Pa]",
+    ylabel="Pressure [psia]",
+    title="Chamber Pressure",
 )
 ```
 
-## Traces
-
-A `Trace` is a generic one-dimensional line of data. It can represent simulation data, test data, a redline, a blueline, a yellowline, a greenline, or a command trace. Filtered and math-derived traces keep the role of their source trace.
-
-FullPlot does not have a special test-data object. If your HDF5 file contains normal datasets such as `time`, `PCMC_1`, `PBTC_1`, and `SHAFT_RPM_1`, you can plot them directly:
+Plot several traces:
 
 ```python
-import fullplot as fplt
-
-run = fplt.open("hotfire.h5")
-run.plot(x="time", y=["PCMC_1", "PCMC_2", "PCMC_3"])
+run.plot(
+    x="time",
+    y=["PCMC_1", "PCMC_2", "PCMC_3"],
+    xlabel="Time [s]",
+    ylabel="Pressure [psia]",
+    title="Chamber Pressure Sensors",
+)
 ```
 
-Use `trace()` when you want to extract a reusable line, filter it, create redlines/bluelines, combine data from multiple files, or do trace math:
+Make a dual-axis plot:
+
+```python
+run.plot(
+    x="time",
+    y=["PCMC_1", "OIPT", "FIPT"],
+    y2="MOV_CMD",
+    xlabel="Time [s]",
+    ylabel="Pressure [psia]",
+    y2label="Command [-]",
+    title="Pressure and Main Ox Valve Command",
+)
+```
+
+Save a figure without showing a GUI window:
+
+```python
+run.plot(
+    x="time",
+    y="PCMC_1",
+    save="pcmc_1.png",
+    show=False,
+)
+```
+
+---
+
+## HDF5 inspection
+
+FullPlot starts with inspection. Use `tree()` when you want to see the file layout and `list()` when you want the datasets grouped by dimensionality.
 
 ```python
 import fullplot as fplt
 
 run = fplt.open("hotfire.h5")
+
+run.tree()
+run.list()
+```
+
+The same operations are available at module level:
+
+```python
+fplt.tree("hotfire.h5")
+fplt.list("hotfire.h5")
+```
+
+You can scope an `H5File` to a group:
+
+```python
+run = fplt.open("engine_sim.h5")
+transient = run.at("/Engine/transient/runs/startup")
+
+transient.tree()
+transient.plot(x="time", y="Chamber_Pressure")
+```
+
+Dataset selectors can be:
+
+* absolute HDF5 paths, such as `"/Engine/transient/time"`,
+* paths relative to the current root, such as `"tracks/PCMC_1"`,
+* unique short names, such as `"PCMC_1"`.
+
+If a short name matches more than one dataset, FullPlot raises `AmbiguousDatasetError` instead of guessing.
+
+Read a raw dataset:
+
+```python
+pressure = run.read("PCMC_1")
+```
+
+Read scalar datasets under a group:
+
+```python
+settings = run.values("metadata")
+```
+
+---
+
+## Core public API
+
+Most users only need these names:
+
+```python
+import fullplot as fplt
+
+fplt.open
+fplt.plot
+fplt.map
+fplt.tree
+fplt.list
+fplt.read
+fplt.time
+fplt.trace
+fplt.write_traces
+fplt.Trace
+fplt.TimeAxis
+fplt.Axis
+fplt.generate_map
+```
+
+The main classes are:
+
+| Name | Purpose |
+| --- | --- |
+| `H5File` | Lightweight handle for one HDF5 file and root group. Created with `fplt.open(...)`. |
+| `Trace` | Reusable one-dimensional x/y data object. Used for raw data, filtered data, generated limits, commands, and derived traces. |
+| `TimeAxis` | Shared shiftable time basis. Several traces can share one time axis and be shifted together. |
+| `Axis` | Independent variable definition for rectangular-grid map generation. |
+
+Important exceptions are:
+
+| Name | Meaning |
+| --- | --- |
+| `FullPlotError` | Base package exception. |
+| `DatasetNotFoundError` | A requested HDF5 dataset or group could not be found. |
+| `AmbiguousDatasetError` | A short name matched more than one HDF5 object. |
+| `PlotDataError` | Data shape, type, dimensionality, or scale is invalid for plotting or trace creation. |
+| `FullPlotMapError` | Base map-generation exception. |
+| `MapGenerationError` | Map generation failed during evaluation, resume, or file layout validation. |
+| `MapOutputError` | The map `evaluate(...)` function returned invalid outputs. |
+
+---
+
+## Trace objects
+
+A `Trace` is a one-dimensional line of data:
+
+```python
+import fullplot as fplt
+
+run = fplt.open("hotfire.h5")
+
 time = run.time("time")
-
-pcmc = run.trace(y="PCMC_1", x=time)
-pcmc_filtered = pcmc.filter("moving_average", window=0.05)
-redline = fplt.Trace.constant("PCMC Redline", x=time, y=400.0, role="redline")
-
-# Shift the shared time axis so original test time 95.0 becomes model time 0.
-time.zero_at(95.0)
-
-fplt.plot([pcmc, pcmc_filtered, redline])
+pc = run.trace(y="PCMC_1", x=time, name="Chamber Pressure")
 ```
 
-`TimeAxis` objects are useful when several traces should share one shifted time basis. `file.time("time")` reads a 1D HDF5 time dataset as a shared time object. Every trace built with `x=time` uses the current shifted values from that same object. Use `time.zero_at(test_time)` or `time.align(data_time=test_time, model_time=model_time)` to change where `t = 0` is located.
+A trace stores:
 
-`Trace.window(start, stop)` keeps the full time axis and replaces values outside the selected interval with `NaN`. This makes partial test-data windows easy to plot and easy for downstream solvers to treat as missing data outside the active interval. Non-finite y-values such as `NaN` are preserved in traces and show up as plot gaps; use `omit_missing()` when you explicitly want a compact finite trace.
+* `x`: current x-values,
+* `y`: y-values,
+* `name`: legend/display name,
+* `role`: plotting role,
+* `attrs`: metadata dictionary.
 
-## Generated traces and roles
-
-Trace roles are only plotting hints. They do not implement abort logic or limit checking. Valid roles are `"data"`, `"redline"`, `"blueline"`, `"yellowline"`, `"greenline"`, and `"command"`. Data traces are solid, limit/reference traces are dashed, and command traces use a dash-dot step style.
+Useful trace attributes:
 
 ```python
+pc.x
+pc.y
+pc.value
+pc.time
+pc.finite
+pc.tmin
+pc.tmax
+pc.time_range
+```
+
+Create traces directly from arrays:
+
+```python
+import numpy as np
 import fullplot as fplt
 
-redline = fplt.Trace.constant("Abort Limit", x=pcmc.x, y=400.0, role="redline")
-yellowline = fplt.Trace.constant("Warning Limit", x=pcmc.x, y=350.0, role="yellowline")
-blueline = fplt.Trace.constant("Low Reference", x=pcmc.x, y=100.0, role="blueline")
+x = np.linspace(0.0, 10.0, 1001)
+y = 300.0 + 10.0 * np.sin(x)
 
-command = fplt.Trace.from_points(
-    "Main Ox Valve Command",
-    points=[(0.0, 0.0), (1.0, 0.0), (1.1, 1.0), (8.0, 1.0), (8.1, 0.0)],
-    x=pcmc.x,
+trace = fplt.Trace.from_arrays("Synthetic Pressure", x=x, y=y)
+```
+
+Create a constant reference trace:
+
+```python
+redline = fplt.Trace.constant("PCMC Redline", x=pc.x, y=400.0, role="redline")
+```
+
+Create a command or sequence trace from points:
+
+```python
+mov_command = fplt.Trace.from_points(
+    "MOV Command",
+    points=[
+        (0.0, 0.0),
+        (0.5, 0.0),
+        (0.6, 1.0),
+        (10.0, 1.0),
+        (10.1, 0.0),
+    ],
+    x=pc.x,
     mode="previous",
     role="command",
 )
-
-fplt.plot([pcmc, redline, yellowline, blueline, command])
 ```
 
-See `examples/traces/` for detailed examples covering generated sensor data, filtering, redlines/bluelines/yellowlines/greenlines, commands, trace math, resampling, derivatives, saving processed traces, and missing-value handling.
+Create an analytic trace from a function:
+
+```python
+reference = fplt.Trace.from_function(
+    "Reference",
+    x=pc.x,
+    function=lambda t: 300.0 + 5.0 * np.sin(2.0 * np.pi * 0.2 * t),
+)
+```
+
+Plot trace objects directly:
+
+```python
+fplt.plot([pc, redline, mov_command])
+```
+
+---
+
+## Trace roles
+
+Trace roles are plotting hints. They do not perform limit checking, abort checking, controller execution, or sequence execution.
+
+Valid roles are:
+
+| Role | Intended meaning | Default line style |
+| --- | --- | --- |
+| `"data"` | Normal measured or simulated data | solid |
+| `"redline"` | Abort or hard limit reference | dashed red-tinted line |
+| `"blueline"` | Lower/secondary reference | dashed blue-tinted line |
+| `"yellowline"` | Warning or caution reference | dashed yellow-tinted line |
+| `"greenline"` | Nominal target or expected value | dashed green-tinted line |
+| `"command"` | Command, schedule, or sequence state | dash-dot step line |
+
+Example:
+
+```python
+redline = fplt.Trace.constant("Abort", x=pc.x, y=400.0, role="redline")
+yellowline = fplt.Trace.constant("Warning", x=pc.x, y=350.0, role="yellowline")
+greenline = fplt.Trace.constant("Target", x=pc.x, y=300.0, role="greenline")
+
+fplt.plot([pc, redline, yellowline, greenline])
+```
+
+---
+
+## Shared time axes and test-data alignment
+
+`TimeAxis` is useful when several traces should move together in time.
+
+```python
+time = run.time("time")
+
+pc = run.trace(y="PCMC_1", x=time)
+oipt = run.trace(y="OIPT", x=time)
+fipt = run.trace(y="FIPT", x=time)
+```
+
+Shift the shared time axis so raw test time 95 seconds becomes model time zero:
+
+```python
+time.zero_at(95.0)
+```
+
+All three traces now report shifted x-values because they share the same `TimeAxis` object.
+
+Use `align(...)` when matching a raw data time to a model time:
+
+```python
+time.align(data_time=95.0, model_time=0.0)
+```
+
+Useful `TimeAxis` attributes:
+
+```python
+time.raw        # original samples
+time.values     # shifted samples
+time.value      # alias for values
+time.time       # alias for values
+time.zero       # current zero offset
+time.dt         # median sample spacing
+time.dt_array   # array of adjacent spacings
+time.duration   # raw time span
+time.is_uniform # approximate uniform-spacing check
+```
+
+---
+
+## Missing values and windows
+
+FullPlot preserves non-finite y-values such as `NaN`. This is deliberate. Missing test-data samples should appear as gaps in plots instead of being connected by a misleading line.
+
+Create a windowed trace:
+
+```python
+startup = pc.window(start=0.0, stop=3.0, name="Startup Window")
+```
+
+`Trace.window(...)` keeps the full time axis and replaces values outside the window with `NaN`. This is useful when a solver or comparison routine should know that the trace only provides valid data inside a specific interval.
+
+Remove missing samples when you explicitly need compact finite data:
+
+```python
+pc_compact = pc.omit_missing()
+```
+
+`drop_missing` is an alias:
+
+```python
+pc_compact = pc.drop_missing()
+```
+
+---
+
+## Filtering and trace math
+
+Filter a trace:
+
+```python
+pc_filtered = pc.filter("moving_average", window=0.05, name="PCMC Filtered")
+```
+
+Supported filters:
+
+```python
+pc.filter("moving_average", window=0.05)
+pc.filter("median", window=0.05)
+pc.filter("savgol", window=0.05, order=2)
+pc.filter("lowpass", cutoff=50.0)
+```
+
+For moving-average, median, and Savitzky-Golay filters, `window` can be either:
+
+* an integer sample count, or
+* a positive x-width, such as seconds when x is time.
+
+Scale or offset a trace:
+
+```python
+pressure_pa = pc.scale(6894.757, name="Pressure [Pa]")
+pressure_gauge = pc.offset(-14.7, name="Gauge Pressure")
+```
+
+Compute a numerical derivative:
+
+```python
+pc_rate = pc.derivative(name="dPc/dt")
+```
+
+Resample a trace:
+
+```python
+new_time = np.linspace(0.0, 10.0, 1001)
+pc_resampled = pc.resample(new_time)
+```
+
+Do trace math. When combining two traces, FullPlot automatically resamples the right-hand trace onto the left-hand trace x-axis:
+
+```python
+error = sim_pc - test_pc
+ratio = sim_pc / test_pc
+```
+
+Sample a trace at one or more x-values:
+
+```python
+value = pc.value_at(1.25)
+values = pc.value_at([1.0, 1.5, 2.0], method="linear")
+value = pc(1.25, method="nearest")
+```
+
+Supported sample methods are `"previous"`, `"linear"`, and `"nearest"`.
+
+Supported bounds modes are:
+
+* `"nan"`: return `NaN` outside the trace range,
+* `"clamp"`: use the first or last sample outside the trace range,
+* `"raise"`: raise an error outside the trace range.
+
+---
+
+## Writing processed traces
+
+Write one or more `Trace` objects to a simple HDF5 layout:
+
+```python
+fplt.write_traces(
+    "processed_traces.h5",
+    [pc, pc_filtered, redline],
+    group="traces",
+    overwrite=True,
+)
+```
+
+The file layout is:
+
+```text
+processed_traces.h5
+└── traces
+    ├── PCMC_1
+    │   ├── x
+    │   └── y
+    ├── PCMC_Filtered
+    │   ├── x
+    │   └── y
+    └── PCMC_Redline
+        ├── x
+        └── y
+```
+
+Trace metadata is stored as HDF5 attributes when possible.
+
+---
+
+## Line plotting options
+
+`H5File.plot(...)` and `fplt.plot(...)` support:
+
+* single or multiple left-axis traces,
+* optional right-axis traces with `y2`,
+* HDF5 datasets and `Trace` objects in the same plot,
+* custom labels,
+* log x/y axes,
+* dark and light themes,
+* saving to PNG, SVG, PDF, or any Matplotlib-supported output,
+* returning Matplotlib objects for custom edits.
+
+Example with labels and a right axis:
+
+```python
+fig, axes = run.plot(
+    x="time",
+    y=["PCMC_1", "PCMC_2"],
+    y2="MOV_CMD",
+    labels=["PC 1", "PC 2"],
+    y2labels=["MOV"],
+    xlabel="Time [s]",
+    ylabel="Pressure [psia]",
+    y2label="Command [-]",
+    title="Pressure and Valve Command",
+    theme="light",
+    save="pressure_command.svg",
+    show=False,
+)
+```
+
+For module-level plotting:
+
+```python
+fplt.plot(
+    "hotfire.h5",
+    x="time",
+    y="PCMC_1",
+)
+```
+
+For trace-only plotting:
+
+```python
+fplt.plot([pc, pc_filtered, redline])
+```
+
+---
+
+## Multidimensional datasets
+
+FullPlot can expand a 2D or higher-dimensional dataset into several line traces.
+
+Use `axis` to choose which dimension becomes the line direction:
+
+```python
+run.plot(
+    x="time",
+    y="pressure_grid",
+    axis=-1,
+)
+```
+
+Use `slice` to reduce higher-dimensional arrays before plotting:
+
+```python
+run.plot(
+    x="time",
+    y="pressure_3d",
+    slice={0: 1},
+    axis=-1,
+)
+```
+
+The same idea applies to maps. A 3D dataset can become a 2D heat map after slicing:
+
+```python
+run.map(
+    z="temperature_3d",
+    slice={0: 2},
+)
+```
+
+---
+
+## Heat maps
+
+Plot a 2D dataset:
+
+```python
+run.map(
+    z="pressure_map",
+    x="mixture_ratio",
+    y="chamber_pressure",
+    xlabel="Mixture Ratio [-]",
+    ylabel="Chamber Pressure [Pa]",
+    zlabel="Temperature [K]",
+)
+```
+
+Stack several 1D datasets into a heat map:
+
+```python
+run.map(
+    z=["TC_1", "TC_2", "TC_3", "TC_4"],
+    x="time",
+    ylabel="Station Index",
+    zlabel="Temperature [K]",
+)
+```
+
+Use log scales when all displayed values are positive:
+
+```python
+run.map(
+    z="residual_map",
+    x="iteration",
+    y="case",
+    zscale="log",
+)
+```
+
+---
 
 ## Map generation
 
-FullPlot can generate simple rectangular-grid HDF5 maps. The layout is intentionally generic: a map group contains one `/axes` group, one `/outputs` group, and optional metadata. FullFlow can read this layout with `Map.from_hdf5(...)`, but the file is just HDF5 and does not require FullFlow.
+FullPlot can generate simple rectangular-grid HDF5 maps.
+
+The generated layout is intentionally generic:
+
+```text
+demo_map.h5
+└── properties
+    ├── axes
+    │   ├── pressure
+    │   └── temperature
+    ├── outputs
+    │   ├── density
+    │   └── enthalpy
+    └── status
+        ├── success
+        └── message
+```
+
+Generate a map:
 
 ```python
 import fullplot as fplt
@@ -109,19 +681,247 @@ fplt.generate_map(
     constants={"gas_constant": 287.0},
     evaluate=lambda pressure, temperature, gas_constant: {
         "density": pressure / (gas_constant * temperature),
+        "enthalpy": 1005.0 * temperature,
     },
     overwrite=True,
 )
 ```
 
-`Axis` defines the independent variables that are swept while the map is generated:
+Axis helpers:
 
 ```python
-fplt.Axis.linear("temperature", start=250.0, stop=600.0, count=8)
-fplt.Axis.log("pressure", start=1.0e5, stop=1.0e7, count=9)
+fplt.Axis.linear("temperature", start=250.0, stop=600.0, count=8, units="K")
+fplt.Axis.log("pressure", start=1.0e5, stop=1.0e7, count=9, units="Pa")
 fplt.Axis.values("mixture_ratio", values=[1.5, 2.0, 2.5, 3.0])
 ```
 
-Use `constants={...}` for inputs that should be passed to every map evaluation but should not become interpolation axes. The `evaluate` function must return a flat dictionary of scalar numeric outputs. Each key becomes one dataset in `/outputs`.
+Use `constants={...}` for values that should be passed to every evaluation but should not become interpolation axes.
 
-See `examples/maps/` for detailed map-generation examples.
+The `evaluate(...)` function must return a flat dictionary of scalar numeric outputs. Each key becomes one dataset in `/outputs`.
+
+Example:
+
+```python
+def evaluate(pressure, temperature, gas_constant):
+    density = pressure / (gas_constant * temperature)
+    return {"density": density}
+```
+
+`generate_map(...)` supports:
+
+* explicit output names with `outputs=[...]`,
+* overwrite protection with `overwrite=True`,
+* interrupted-map continuation with `resume=True`,
+* configurable failure behavior with `raise_errors=False`,
+* optional compression,
+* metadata storage.
+
+A robust long-running map call might look like this:
+
+```python
+fplt.generate_map(
+    "engine_map.h5",
+    group="chamber",
+    axes=[
+        fplt.Axis.log("pressure", 1.0e5, 1.0e7, 25, units="Pa"),
+        fplt.Axis.values("mixture_ratio", [1.5, 2.0, 2.5, 3.0]),
+    ],
+    constants={"area": 0.0039},
+    outputs=["temperature", "gamma", "molecular_weight"],
+    evaluate=evaluate_chamber,
+    metadata={"description": "Chamber property map"},
+    resume=True,
+    raise_errors=False,
+    fill_value=float("nan"),
+)
+```
+
+---
+
+## Command-line inspection
+
+FullPlot installs a small `fullplot` command for HDF5 inspection.
+
+Print a tree:
+
+```bash
+fullplot hotfire.h5
+fullplot hotfire.h5 --tree
+```
+
+List datasets:
+
+```bash
+fullplot hotfire.h5 --list
+```
+
+Inspect a root group:
+
+```bash
+fullplot engine_sim.h5 --root /Engine/transient/runs/startup --list
+```
+
+Limit tree depth:
+
+```bash
+fullplot engine_sim.h5 --max-depth 2
+```
+
+The CLI does not create plots. Use the Python API for plotting so scripts can control Matplotlib backends, figure editing, saving, and showing.
+
+---
+
+## Examples
+
+The repository includes three example folders:
+
+```text
+examples/
+├── hdf5_plotting/
+├── maps/
+└── traces/
+```
+
+`examples/hdf5_plotting/` demonstrates:
+
+* generating a synthetic HDF5 plotting file,
+* inspecting the tree and dataset list,
+* single-trace plots,
+* multiple-trace plots,
+* dual-axis plots,
+* 2D heat maps,
+* stacked 1D heat maps,
+* log axes and log color scales,
+* multidimensional line traces,
+* multidimensional slices,
+* light theme plots,
+* module-level API calls,
+* saving figures.
+
+`examples/traces/` demonstrates:
+
+* generating synthetic hotfire-style sensor data,
+* extracting reusable traces,
+* filtering,
+* redlines/bluelines/yellowlines/greenlines,
+* command and sequence traces,
+* trace math and automatic resampling,
+* windowing,
+* scaling and offsetting,
+* derivatives,
+* saving processed traces,
+* missing-value handling,
+* shared `TimeAxis` alignment.
+
+`examples/maps/` demonstrates:
+
+* simple map generation,
+* linear/log/explicit axes,
+* constants,
+* metadata,
+* output discovery,
+* HDF5 layout inspection.
+
+---
+
+## Themes
+
+FullPlot includes two themes:
+
+```python
+run.plot(x="time", y="PCMC_1", theme="dark")
+run.plot(x="time", y="PCMC_1", theme="light")
+```
+
+The dark theme is useful for quick interactive engineering plots. The light theme is better for reports, documents, and slides.
+
+---
+
+## Units
+
+FullPlot does not perform unit conversion.
+
+It reads numeric arrays and uses labels provided by the user or stored in HDF5 attributes. This keeps FullPlot generic and avoids guessing how engineering units should be converted.
+
+Recommended practice:
+
+```python
+run.plot(
+    x="time",
+    y="PCMC_1",
+    xlabel="Time [s]",
+    ylabel="Pressure [psia]",
+)
+```
+
+If you need converted data, convert explicitly with trace math:
+
+```python
+pc_pa = pc.scale(6894.757, name="PCMC_1 [Pa]")
+```
+
+---
+
+## Limitations and design choices
+
+FullPlot is intentionally small.
+
+Current limitations:
+
+* HDF5 is the only supported file format.
+* The package focuses on numeric datasets.
+* There is no built-in unit conversion.
+* There is no built-in DAQ metadata standard.
+* Trace roles are plotting hints only.
+* Redlines and commands are not safety logic.
+* Map generation is for rectangular grids only.
+* Map outputs must be scalar numeric values.
+* Interpolation and filtering are intentionally simple and NumPy/SciPy based.
+* FullPlot does not attempt to replace specialized dashboards, data historians, or test-stand control software.
+
+This is deliberate. The package is meant to be a simple bridge between HDF5 engineering data and Python plotting/processing workflows.
+
+---
+
+## Development checks
+
+Useful local checks:
+
+```bash
+python -m compileall -q src tests examples
+python -m pytest -q
+uv build
+```
+
+A minimal smoke test:
+
+```python
+import tempfile
+from pathlib import Path
+
+import h5py
+import numpy as np
+import fullplot as fplt
+
+with tempfile.TemporaryDirectory() as tmp:
+    filename = Path(tmp) / "demo.h5"
+
+    with h5py.File(filename, "w") as h5:
+        h5["time"] = np.linspace(0.0, 1.0, 11)
+        h5["pressure"] = np.linspace(100.0, 200.0, 11)
+
+    run = fplt.open(filename)
+    time = run.time("time")
+    pressure = run.trace("pressure", x=time)
+    redline = fplt.Trace.constant("redline", x=time, y=250.0, role="redline")
+    run.plot(x="time", y="pressure", show=False)
+    fplt.plot([pressure, redline], show=False)
+```
+
+---
+
+## License
+
+FullPlot is released under the GNU General Public License v3.0 only (`GPL-3.0-only`). See `LICENSE` for the full text.
+
+See `THIRD_PARTY_LICENSES.md` for dependency license notes.
