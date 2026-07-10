@@ -26,47 +26,13 @@ FullPlot does **not** require a special FullFlow file format. If your HDF5 file 
 
 ---
 
-## Repository status for 0.1.0
-
-FullPlot 0.1.0 is prepared as the first publish-ready public release of the package.
-
-There is no separate official documentation site yet, so the repository is intentionally documentation-heavy:
-
-* `README.md` is the primary user guide.
-* `CHANGELOG.md` records release-level changes and bug fixes.
-* `PUBLISHING.md` records the build, smoke-test, artifact-inspection, and upload checklist.
-* `THIRD_PARTY_LICENSES.md` records dependency and license notes.
-* `examples/` contains detailed runnable examples.
-* Public classes, functions, properties, and exceptions include docstrings so `help(fullplot.Trace)`, IDE inspection, and future generated API docs are useful immediately.
-
-The 0.1.0 release focuses on documentation, packaging, smoke testing, public API docstrings, and fixing obvious publish-blocking bugs. The core plotting, trace, and map-generation model is intentionally small.
-
----
-
 ## Installation
 
 ```bash
-pip install fullplot
+pip3 install fullplot
 ```
 
 FullPlot requires Python 3.11 or newer.
-
-For local development from the repository:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
-python -m pytest
-```
-
-With `uv`:
-
-```bash
-uv sync --dev
-uv run pytest
-```
 
 ---
 
@@ -571,39 +537,218 @@ fplt.plot([pc, pc_filtered, redline])
 
 ---
 
-## Multidimensional datasets
+## Multidimensional datasets, axes, and slices
 
-FullPlot can expand a 2D or higher-dimensional dataset into several line traces.
+FullPlot can plot and trace 2D or higher-dimensional datasets by selecting one dimension to vary and holding the other dimensions fixed.
 
-Use `axis` to choose which dimension becomes the line direction:
+The two key arguments are:
+
+| Argument | Meaning |
+| --- | --- |
+| `axis` | The dataset dimension that remains as the plotted line direction. |
+| `slice` | A dictionary of `{dimension_index: fixed_index}` values used to hold the other dimensions fixed. |
+
+For a dataset with shape:
+
+```text
+(chamber_pressure, mixture_ratio, expansion_ratio, ambient_pressure, nfz)
+```
+
+the dimension numbers are:
+
+```text
+axis 0 -> chamber_pressure
+axis 1 -> mixture_ratio
+axis 2 -> expansion_ratio
+axis 3 -> ambient_pressure
+axis 4 -> nfz
+```
+
+So this call plots a line that varies along chamber pressure:
 
 ```python
 run.plot(
-    x="time",
-    y="pressure_grid",
-    axis=-1,
+    x="axes/chamber_pressure",
+    y="outputs/thrust_coefficient",
+    axis=0,
+    slice={
+        1: 12,  # fixed mixture_ratio index
+        2: 10,  # fixed expansion_ratio index
+        3: 3,   # fixed ambient_pressure index
+        4: 0,   # fixed nfz index
+    },
+    xlabel="Chamber Pressure [Pa]",
+    ylabel="Thrust Coefficient [-]",
 )
 ```
 
-Use `slice` to reduce higher-dimensional arrays before plotting:
+The dimension selected by `axis` is the dimension that becomes the line. The dimensions listed in `slice` are reduced to one fixed index.
+
+### Creating traces from multidimensional data
+
+`trace(...)` accepts the same `axis` and `slice` arguments as `plot(...)`. This makes it possible to create reusable traces from multidimensional map data and then plot them together.
 
 ```python
-run.plot(
-    x="time",
-    y="pressure_3d",
-    slice={0: 1},
-    axis=-1,
+import fullplot as fplt
+
+psia_to_pa = 6894.75728
+
+file = fplt.open("sizer_lookups.h5")
+result = file.at("/engine_lookup")
+
+pc_psia = result.read("axes/chamber_pressure") / psia_to_pa
+
+cf_eps_4 = result.trace(
+    y="outputs/thrust_coefficient",
+    x=pc_psia,
+    axis=0,
+    slice={
+        1: 12,  # mixture_ratio index
+        2: 8,   # expansion_ratio index
+        3: 3,   # ambient_pressure index
+        4: 0,   # nfz index
+    },
+    name="eps = 4",
+)
+
+cf_eps_6 = result.trace(
+    y="outputs/thrust_coefficient",
+    x=pc_psia,
+    axis=0,
+    slice={
+        1: 12,
+        2: 14,
+        3: 3,
+        4: 0,
+    },
+    name="eps = 6",
+)
+
+result.plot(
+    y=[cf_eps_4, cf_eps_6],
+    xlabel="Chamber Pressure [psia]",
+    ylabel="Thrust Coefficient [-]",
+    title="Thrust Coefficient vs Chamber Pressure",
 )
 ```
 
-The same idea applies to maps. A 3D dataset can become a 2D heat map after slicing:
+This is equivalent to manually extracting:
 
 ```python
-run.map(
-    z="temperature_3d",
-    slice={0: 2},
+cf[:, 12, 8, 3, 0]   # eps = 4 trace
+cf[:, 12, 14, 3, 0]  # eps = 6 trace
+```
+
+but keeps the plotting workflow trace-based.
+
+### Selecting nearest physical values
+
+`slice` uses integer indices, not physical axis values. If you want to select the nearest value on an axis, use a small helper:
+
+```python
+import numpy as np
+
+
+def nearest_index(values, target):
+    values = np.asarray(values, dtype=float)
+    return int(np.argmin(np.abs(values - target)))
+```
+
+Example:
+
+```python
+mr = result.read("axes/mixture_ratio")
+eps = result.read("axes/expansion_ratio")
+pamb_psia = result.read("axes/ambient_pressure") / psia_to_pa
+nfz = result.read("axes/nfz")
+
+mr_i = nearest_index(mr, 2.5)
+pamb_i = nearest_index(pamb_psia, 14.7)
+nfz_i = nearest_index(nfz, 0)
+
+traces = []
+
+for target_eps in [2, 4, 6, 8, 10]:
+    eps_i = nearest_index(eps, target_eps)
+
+    traces.append(
+        result.trace(
+            y="outputs/thrust_coefficient",
+            x=pc_psia,
+            axis=0,
+            slice={
+                1: mr_i,
+                2: eps_i,
+                3: pamb_i,
+                4: nfz_i,
+            },
+            name=f"eps = {eps[eps_i]:.1f}",
+        )
+    )
+
+result.plot(
+    y=traces,
+    xlabel="Chamber Pressure [psia]",
+    ylabel="Thrust Coefficient [-]",
+    title="Thrust Coefficient vs Chamber Pressure",
 )
 ```
+
+### Common slicing patterns
+
+For a dataset ordered as:
+
+```text
+(chamber_pressure, mixture_ratio, expansion_ratio, ambient_pressure, nfz)
+```
+
+these are common one-dimensional traces:
+
+```python
+cf[:, mr_i, eps_i, pamb_i, nfz_i]      # vary chamber pressure
+cf[pc_i, :, eps_i, pamb_i, nfz_i]      # vary mixture ratio
+cf[pc_i, mr_i, :, pamb_i, nfz_i]       # vary expansion ratio
+cf[pc_i, mr_i, eps_i, :, nfz_i]        # vary ambient pressure
+cf[pc_i, mr_i, eps_i, pamb_i, :]       # vary nfz
+```
+
+The matching FullPlot arguments are:
+
+```python
+# Vary chamber pressure.
+axis=0
+slice={1: mr_i, 2: eps_i, 3: pamb_i, 4: nfz_i}
+
+# Vary mixture ratio.
+axis=1
+slice={0: pc_i, 2: eps_i, 3: pamb_i, 4: nfz_i}
+
+# Vary expansion ratio.
+axis=2
+slice={0: pc_i, 1: mr_i, 3: pamb_i, 4: nfz_i}
+```
+
+### Slicing for heat maps
+
+For heat maps, leave two dimensions unsliced. For example, to plot thrust coefficient as a function of mixture ratio and chamber pressure, hold expansion ratio, ambient pressure, and `nfz` fixed:
+
+```python
+result.map(
+    z="outputs/thrust_coefficient",
+    x="axes/mixture_ratio",
+    y="axes/chamber_pressure",
+    slice={
+        2: eps_i,
+        3: pamb_i,
+        4: nfz_i,
+    },
+    xlabel="Mixture Ratio [-]",
+    ylabel="Chamber Pressure [Pa]",
+    zlabel="Thrust Coefficient [-]",
+)
+```
+
+Use `xscale="log"`, `yscale="log"`, or `zscale="log"` only when the displayed values on that axis are positive.
 
 ---
 
@@ -880,43 +1025,6 @@ Current limitations:
 * FullPlot does not attempt to replace specialized dashboards, data historians, or test-stand control software.
 
 This is deliberate. The package is meant to be a simple bridge between HDF5 engineering data and Python plotting/processing workflows.
-
----
-
-## Development checks
-
-Useful local checks:
-
-```bash
-python -m compileall -q src tests examples
-python -m pytest -q
-uv build
-```
-
-A minimal smoke test:
-
-```python
-import tempfile
-from pathlib import Path
-
-import h5py
-import numpy as np
-import fullplot as fplt
-
-with tempfile.TemporaryDirectory() as tmp:
-    filename = Path(tmp) / "demo.h5"
-
-    with h5py.File(filename, "w") as h5:
-        h5["time"] = np.linspace(0.0, 1.0, 11)
-        h5["pressure"] = np.linspace(100.0, 200.0, 11)
-
-    run = fplt.open(filename)
-    time = run.time("time")
-    pressure = run.trace("pressure", x=time)
-    redline = fplt.Trace.constant("redline", x=time, y=250.0, role="redline")
-    run.plot(x="time", y="pressure", show=False)
-    fplt.plot([pressure, redline], show=False)
-```
 
 ---
 
