@@ -1028,6 +1028,22 @@ This is deliberate. The package is meant to be a simple bridge between HDF5 engi
 
 ---
 
+# Documentation
+
+Full documentation:
+
+https://saakethramoju.github.io/softwares/thermoprop/
+
+Source code:
+
+https://github.com/saakethramoju/ThermoProp
+
+PyPI:
+
+https://pypi.org/project/thermoprop/
+
+---
+
 ## License
 
 FullPlot is released under the GNU General Public License v3.0 only (`GPL-3.0-only`). See `LICENSE` for the full text.
