@@ -1032,15 +1032,15 @@ This is deliberate. The package is meant to be a simple bridge between HDF5 engi
 
 Full documentation:
 
-https://saakethramoju.github.io/softwares/thermoprop/
+https://saakethramoju.github.io/softwares/fullplot/
 
 Source code:
 
-https://github.com/saakethramoju/ThermoProp
+https://github.com/saakethramoju/FullPlot
 
 PyPI:
 
-https://pypi.org/project/thermoprop/
+https://pypi.org/project/fullplot/
 
 ---
 
