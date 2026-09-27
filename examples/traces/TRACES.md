@@ -49,6 +49,9 @@ Run the examples from this directory or from the repository root.
 11. `10_windowed_trace_keeps_full_time.py`  
     Shows that `Trace.window()` masks values outside the selected window with `NaN` while keeping the full time axis.
 
+12. `11_shared_time_axis_window.py`
+    Shows how `TimeAxis.window()` crops every trace that shares the same time basis.
+
 ## Core workflow
 
 ```python
@@ -83,10 +86,12 @@ time.zero_at(0.05)
 ```
 
 Changing the `TimeAxis` zero point shifts every trace that references that time
-object. This is useful when test-data time zero and simulation time zero are not
-the same.
+object. Windowing the same axis crops all attached traces together:
 
-`Trace.window(start, stop)` now keeps the full time axis and replaces values
-outside the selected window with `NaN`. That makes partial test-data windows
-easy to plot and easy for downstream solvers to treat as missing data outside
-the active balance interval.
+```python
+time.window(2.0, 8.0)
+```
+
+Call `time.clear_window()` to restore the full shared range. Use
+`Trace.window(start, stop)` instead when only one trace should become `NaN`
+outside a validity interval while the shared time axis stays unchanged.

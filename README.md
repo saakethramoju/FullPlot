@@ -187,7 +187,7 @@ The main classes are:
 | --- | --- |
 | `H5File` | Lightweight handle for one HDF5 file and root group. Created with `fplt.open(...)`. |
 | `Trace` | Reusable one-dimensional x/y data object. Used for raw data, filtered data, generated limits, commands, and derived traces. |
-| `TimeAxis` | Shared shiftable time basis. Several traces can share one time axis and be shifted together. |
+| `TimeAxis` | Shared shiftable and windowable time basis. Several traces can share one axis and follow the same alignment/window. |
 | `Axis` | Independent variable definition for rectangular-grid map generation. |
 
 Important exceptions are:
@@ -337,7 +337,7 @@ Shift the shared time axis so raw test time 95 seconds becomes model time zero:
 time.zero_at(95.0)
 ```
 
-All three traces now report shifted x-values because they share the same `TimeAxis` object.
+All three traces shift because they share the same `TimeAxis` object.
 
 Use `align(...)` when matching a raw data time to a model time:
 
@@ -345,19 +345,45 @@ Use `align(...)` when matching a raw data time to a model time:
 time.align(data_time=95.0, model_time=0.0)
 ```
 
+Window the shared time axis when every attached trace should use the same section of the test:
+
+```python
+time.window(start=2.0, stop=6.5)
+
+pc.x      # only 2.0 ... 6.5 s
+pc.y      # matching PCMC samples
+oipt.y    # matching OIPT samples
+fipt.y    # matching FIPT samples
+```
+
+The original arrays are preserved. Restore the full range with:
+
+```python
+time.clear_window()
+```
+
+Or create an independently windowed copy:
+
+```python
+mainstage_time = time.windowed(2.0, 6.5)
+```
+
 Useful `TimeAxis` attributes:
 
 ```python
-time.raw        # original samples
-time.values     # shifted samples
-time.value      # alias for values
-time.time       # alias for values
-time.zero       # current zero offset
-time.dt         # median sample spacing
-time.dt_array   # array of adjacent spacings
-time.duration   # raw time span
-time.is_uniform # approximate uniform-spacing check
+time.raw          # original unshifted samples
+time.full_values  # all shifted samples before windowing
+time.values       # shifted samples in the active window
+time.zero         # current zero offset
+time.count        # active sample count
+time.raw_count    # original sample count
+time.duration     # active time span
+time.raw_duration # original time span
+time.window_range # (start, stop)
+time.has_window   # whether a shared window is active
 ```
+
+For a trace that uses a shared `TimeAxis`, `trace.raw_y` gives the original y-array while `trace.y` follows the active time window.
 
 ---
 
@@ -365,13 +391,13 @@ time.is_uniform # approximate uniform-spacing check
 
 FullPlot preserves non-finite y-values such as `NaN`. This is deliberate. Missing test-data samples should appear as gaps in plots instead of being connected by a misleading line.
 
-Create a windowed trace:
+Use `TimeAxis.window(...)` when several traces should be cropped together. Use `Trace.window(...)` when only one trace should be valid over part of the otherwise unchanged time axis:
 
 ```python
 startup = pc.window(start=0.0, stop=3.0, name="Startup Window")
 ```
 
-`Trace.window(...)` keeps the full time axis and replaces values outside the window with `NaN`. This is useful when a solver or comparison routine should know that the trace only provides valid data inside a specific interval.
+`Trace.window(...)` keeps its current x-axis and replaces y-values outside the interval with `NaN`. This is useful when a solver or comparison routine should treat one signal as unavailable outside that interval.
 
 Remove missing samples when you explicitly need compact finite data:
 
@@ -496,6 +522,7 @@ Trace metadata is stored as HDF5 attributes when possible.
 * HDF5 datasets and `Trace` objects in the same plot,
 * custom labels,
 * log x/y axes,
+* display-only `xlim`, `ylim`, and `y2lim` limits,
 * dark and light themes,
 * saving to PNG, SVG, PDF, or any Matplotlib-supported output,
 * returning Matplotlib objects for custom edits.
@@ -513,6 +540,9 @@ fig, axes = run.plot(
     ylabel="Pressure [psia]",
     y2label="Command [-]",
     title="Pressure and Valve Command",
+    xlim=(2.0, 8.0),
+    ylim=(0.0, 500.0),
+    y2lim=(-0.1, 1.1),
     theme="light",
     save="pressure_command.svg",
     show=False,
@@ -533,6 +563,12 @@ For trace-only plotting:
 
 ```python
 fplt.plot([pc, pc_filtered, redline])
+```
+
+Plot limits only change what is displayed; they do not window or modify the underlying trace data:
+
+```python
+fplt.plot([pc, oipt], xlim=(2.0, 6.5))
 ```
 
 ---

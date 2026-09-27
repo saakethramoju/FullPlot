@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.1
+
+### Added
+
+* Added shared `TimeAxis.window(...)`, `clear_window()`, and `windowed(...)` support so every trace using the same time axis follows one common data window.
+* Added `TimeAxis.full_values`, `raw_count`, `raw_duration`, `raw_dt_array`, `window_range`, and `has_window` for working with the original and active time ranges.
+* Added `Trace.raw_y` so the original y-data remains available when a shared `TimeAxis` is windowed.
+* Added `xlim`, `ylim`, and `y2lim` plotting arguments for display-only axis limits.
+
+### Changed
+
+* Shared `TimeAxis` windowing now propagates automatically through attached traces, HDF5 trace extraction, and direct HDF5 plotting.
+* `TimeAxis.count`, `duration`, `dt_array`, and related active-axis properties now describe the current window, while the new `raw_*` properties describe the complete source axis.
+* Trace constructors that use a `TimeAxis` preserve the complete source-length data so windows can be changed or cleared later.
+
 ## 0.1.0
 
 ### Added

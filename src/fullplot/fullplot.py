@@ -199,28 +199,11 @@ def _line_style_for_role(role: str, theme: str, color, linewidth: float) -> dict
 
 @dataclass
 class TimeAxis:
-    """Shared, shiftable time basis for related traces.
+    """Shared, shiftable and windowable time basis for related traces.
 
-    ``TimeAxis`` stores the original time samples from an HDF5 dataset or a user
-    supplied array and applies a mutable zero-time offset when values are read.
-    A single ``TimeAxis`` can be shared by many ``Trace`` objects, which makes it
-    convenient to align test data and simulation data without copying every
-    trace.
-
-    Parameters
-    ----------
-    raw:
-        One-dimensional, strictly increasing time values in the source data
-        units. FullPlot normally uses seconds, but no unit conversion is
-        performed.
-    name:
-        Human-readable axis name, usually the HDF5 dataset basename such as
-        ``"time"``.
-    zero:
-        Raw data value that should be displayed as zero. The shifted values are
-        always ``raw - zero``.
-    attrs:
-        Optional metadata copied from the HDF5 dataset or supplied by the user.
+    Several ``Trace`` objects can reference one ``TimeAxis``. Shifting or
+    windowing the axis updates all of those traces together without changing the
+    original source arrays.
     """
 
     raw: np.ndarray
@@ -240,35 +223,83 @@ class TimeAxis:
         self.name = str(self.name)
         self.zero = float(self.zero)
         self.attrs = {} if self.attrs is None else dict(self.attrs)
+        self._window_start: float | None = None
+        self._window_stop: float | None = None
+
+    @property
+    def full_values(self) -> np.ndarray:
+        """Return all shifted time values before any active window is applied."""
+        return self.raw - self.zero
+
+    def _selection_for(self, start: float | None, stop: float | None) -> slice:
+        if start is not None:
+            start = float(start)
+        if stop is not None:
+            stop = float(stop)
+        if start is not None and stop is not None and start > stop:
+            raise ValueError("TimeAxis window start cannot be greater than stop.")
+
+        values = self.full_values
+        tol = 1e-12
+        if self.raw.size > 1:
+            tol = max(tol, abs(float(np.median(np.diff(self.raw)))) * 1e-9)
+
+        left = 0 if start is None else int(np.searchsorted(values, start - tol, side="left"))
+        right = len(values) if stop is None else int(np.searchsorted(values, stop + tol, side="right"))
+
+        if left >= right:
+            raise PlotDataError("TimeAxis window contains no samples.")
+
+        return slice(left, right)
+
+    @property
+    def selection(self) -> slice:
+        """Slice selecting the active samples from the full time axis."""
+        return self._selection_for(self._window_start, self._window_stop)
 
     @property
     def values(self) -> np.ndarray:
-        """Return the current shifted time values as ``raw - zero``."""
-        return self.raw - self.zero
+        """Return shifted time values inside the active window."""
+        return self.full_values[self.selection]
 
     @property
     def value(self) -> np.ndarray:
-        """Alias for :attr:`values` for consistency with ``Trace.value``."""
+        """Alias for :attr:`values`."""
         return self.values
 
     @property
     def time(self) -> np.ndarray:
-        """Alias for :attr:`values` for code that expects a time attribute."""
+        """Alias for :attr:`values`."""
         return self.values
 
     @property
+    def has_window(self) -> bool:
+        """Whether an active time window is limiting the axis."""
+        return self._window_start is not None or self._window_stop is not None
+
+    @property
+    def window_range(self) -> tuple[float | None, float | None]:
+        """Current ``(start, stop)`` window in shifted time coordinates."""
+        return self._window_start, self._window_stop
+
+    @property
     def count(self) -> int:
-        """Number of raw time samples in the axis."""
+        """Number of samples in the active time window."""
+        return int(self.values.size)
+
+    @property
+    def raw_count(self) -> int:
+        """Number of samples in the original time axis."""
         return int(self.raw.size)
 
     @property
     def tmin(self) -> float:
-        """First shifted time value."""
+        """First shifted time value in the active window."""
         return float(self.values[0])
 
     @property
     def tmax(self) -> float:
-        """Last shifted time value."""
+        """Last shifted time value in the active window."""
         return float(self.values[-1])
 
     @property
@@ -283,53 +314,93 @@ class TimeAxis:
 
     @property
     def duration(self) -> float:
-        """Unshifted time span covered by the axis."""
+        """Time span covered by the active window."""
+        if self.count < 2:
+            return 0.0
+        return float(self.values[-1] - self.values[0])
+
+    @property
+    def raw_duration(self) -> float:
+        """Time span covered by the original source axis."""
         if self.raw.size < 2:
             return 0.0
         return float(self.raw[-1] - self.raw[0])
 
     @property
     def dt_array(self) -> np.ndarray:
-        """Array of adjacent raw-sample spacings."""
+        """Adjacent spacings inside the active window."""
+        return np.diff(self.values)
+
+    @property
+    def raw_dt_array(self) -> np.ndarray:
+        """Adjacent spacings in the original source axis."""
         return np.diff(self.raw)
 
     @property
     def dt(self) -> float:
-        """Nominal timestep, computed as the median adjacent spacing."""
-        if self.raw.size < 2:
+        """Nominal timestep in the active window."""
+        if self.count < 2:
             return float("nan")
         return float(np.median(self.dt_array))
 
     @property
     def is_uniform(self) -> bool:
-        """Whether the raw samples are approximately uniformly spaced."""
-        if self.raw.size < 3:
+        """Whether active samples are approximately uniformly spaced."""
+        if self.count < 3:
             return True
         dt = self.dt_array
         return bool(np.allclose(dt, np.median(dt), rtol=1e-6, atol=1e-12))
 
     def zero_at(self, time: float) -> "TimeAxis":
         """Shift the time basis so ``time`` in raw data appears as ``t = 0``."""
-        self.zero = float(time)
+        zero = float(time)
+        if zero != self.zero:
+            old_zero = self.zero
+            self.zero = zero
+            try:
+                self._selection_for(self._window_start, self._window_stop)
+            except (PlotDataError, ValueError):
+                self.zero = old_zero
+                raise
         return self
 
     def align(self, data_time: float, model_time: float = 0.0) -> "TimeAxis":
-        """Shift the axis so one raw data time aligns with one model time.
+        """Shift the axis so one raw data time aligns with one model time."""
+        return self.zero_at(float(data_time) - float(model_time))
 
-        For example, ``axis.align(data_time=95.0, model_time=0.0)`` makes raw
-        test time 95 seconds appear at simulation time zero.
-        """
-        self.zero = float(data_time) - float(model_time)
+    def window(self, start: float | None = None, stop: float | None = None) -> "TimeAxis":
+        """Limit this shared axis, and all attached traces, to a time interval."""
+        start = None if start is None else float(start)
+        stop = None if stop is None else float(stop)
+        self._selection_for(start, stop)
+
+        if (start, stop) != self.window_range:
+            self._window_start = start
+            self._window_stop = stop
         return self
 
+    def clear_window(self) -> "TimeAxis":
+        """Restore the full time range."""
+        if self.has_window:
+            self._window_start = None
+            self._window_stop = None
+        return self
+
+    def windowed(self, start: float | None = None, stop: float | None = None) -> "TimeAxis":
+        """Return an independent copy with a time window applied."""
+        return self.copy().window(start=start, stop=stop)
+
     def copy(self, name: str | None = None) -> "TimeAxis":
-        """Return an independent copy preserving the current zero offset."""
-        return TimeAxis(
+        """Return an independent copy preserving alignment and window state."""
+        copied = TimeAxis(
             raw=self.raw.copy(),
             name=self.name if name is None else name,
             zero=self.zero,
             attrs=self.attrs,
         )
+        copied._window_start = self._window_start
+        copied._window_stop = self._window_stop
+        return copied
 
     def __len__(self) -> int:
         return self.count
@@ -357,8 +428,8 @@ class Trace:
     ----------
     x:
         One-dimensional x values or a :class:`TimeAxis`. When a ``TimeAxis`` is
-        supplied, the trace keeps a reference to it so later calls to
-        ``time_axis.zero_at(...)`` shift all traces sharing that axis.
+        supplied, the trace keeps a reference to it so alignment and windowing
+        changes apply to every trace sharing that axis.
     y:
         One-dimensional y values. Non-finite y-values are preserved so missing
         test-data samples appear as plot gaps instead of being silently removed.
@@ -387,23 +458,33 @@ class Trace:
         else:
             self._x = None
 
-        self.y = _as_1d_numeric_array(y, "Trace y")
-
-        if self.x.shape != self.y.shape:
-            raise PlotDataError(
-                f"Trace x and y must have the same length. "
-                f"Received {len(self.x)} and {len(self.y)}."
-            )
+        y_array = _as_1d_numeric_array(y, "Trace y")
 
         if self.time_axis is None:
-            mask = np.isfinite(self._x)
+            if self._x.shape != y_array.shape:
+                raise PlotDataError(
+                    f"Trace x and y must have the same length. "
+                    f"Received {len(self._x)} and {len(y_array)}."
+                )
+            self._raw_y = y_array
 
+            mask = np.isfinite(self._x)
             if not np.any(mask):
                 raise PlotDataError("Trace has no finite x values.")
-
             if not np.all(mask):
                 self._x = self._x[mask]
-                self.y = self.y[mask]
+                self._raw_y = self._raw_y[mask]
+        else:
+            if len(y_array) == self.time_axis.raw_count:
+                self._raw_y = y_array
+            elif len(y_array) == self.time_axis.count:
+                self._raw_y = np.full(self.time_axis.raw_count, np.nan, dtype=float)
+                self._raw_y[self.time_axis.selection] = y_array
+            else:
+                raise PlotDataError(
+                    f"Trace y must match the TimeAxis raw length ({self.time_axis.raw_count}) "
+                    f"or active length ({self.time_axis.count}). Received {len(y_array)}."
+                )
 
         self.name = str(name)
         self.role = _normalize_trace_role(role)
@@ -411,10 +492,22 @@ class Trace:
 
     @property
     def x(self) -> np.ndarray:
-        """Current x-values for the trace, including any shared TimeAxis shift."""
+        """Current x-values, including shared alignment and windowing."""
         if self.time_axis is not None:
             return self.time_axis.values
         return self._x
+
+    @property
+    def y(self) -> np.ndarray:
+        """Current y-values, following any shared ``TimeAxis`` window."""
+        if self.time_axis is not None:
+            return self._raw_y[self.time_axis.selection]
+        return self._raw_y
+
+    @property
+    def raw_y(self) -> np.ndarray:
+        """Original y-array before shared ``TimeAxis`` windowing."""
+        return self._raw_y
 
     @property
     def time(self) -> np.ndarray:
@@ -466,9 +559,15 @@ class Trace:
         FullPlot operations should not invent new display names. If the user
         wants a new legend name, the user can pass name=... or call renamed(...).
         """
+        x_values = self._x_for_new_trace() if x is None else x
+        if y is None:
+            y_values = self.raw_y.copy() if isinstance(x_values, TimeAxis) else self.y.copy()
+        else:
+            y_values = np.asarray(y, dtype=float)
+
         return Trace(
-            x=self._x_for_new_trace() if x is None else x,
-            y=self.y.copy() if y is None else np.asarray(y, dtype=float),
+            x=x_values,
+            y=y_values,
             name=self.name if name is None else name,
             role=self.role if role is None else role,
             attrs=dict(self.attrs) if attrs is None else dict(attrs),
@@ -500,7 +599,7 @@ class Trace:
         """
         if isinstance(x, TimeAxis):
             x_values = x
-            y_array = np.full(len(x), float(y), dtype=float)
+            y_array = np.full(x.raw_count, float(y), dtype=float)
         else:
             x_values = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
             y_array = np.full_like(x_values, float(y), dtype=float)
@@ -537,7 +636,7 @@ class Trace:
             x_array = xp
         elif isinstance(x, TimeAxis):
             x_values = x
-            x_array = x.values
+            x_array = x.full_values
         else:
             x_values = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
             x_array = x_values
@@ -565,7 +664,7 @@ class Trace:
         """
         if isinstance(x, TimeAxis):
             x_values = x
-            x_array = x.values
+            x_array = x.full_values
         else:
             x_values = _as_1d_numeric_array(x, "Trace x", omit_nonfinite=True)
             x_array = x_values
@@ -709,7 +808,7 @@ class Trace:
 
         return Trace(
             x=x_values,
-            y=self.y.copy(),
+            y=self.raw_y.copy() if isinstance(x_values, TimeAxis) else self.y.copy(),
             name=self.name if name is None else name,
             role=self.role if role is None else role,
             attrs=merged_attrs,
@@ -871,14 +970,14 @@ class Trace:
         """
         if isinstance(x, TimeAxis):
             x_values = x
-            x_array = x.values
+            x_array = x.full_values
         else:
             x_values = _as_1d_numeric_array(x, "resample x", omit_nonfinite=True)
             x_array = x_values
 
         return Trace(
             x=x_values,
-            y=np.interp(x_array, self.x, self.y),
+            y=self.value_at(x_array, method="linear", bounds="nan"),
             name=self.name if name is None else name,
             role=self.role,
             attrs=self.attrs,
@@ -1395,7 +1494,7 @@ class H5File:
         """Read a one-dimensional HDF5 dataset as a shared ``TimeAxis``.
 
         The returned axis can be passed to ``trace(..., x=time_axis)`` and later
-        shifted with ``zero_at`` or ``align``.
+        shifted, aligned, or windowed once for all attached traces.
         """
 
         with h5py.File(self.filename, "r") as h5:
@@ -1455,7 +1554,7 @@ class H5File:
             if x is not None:
                 if isinstance(x, TimeAxis):
                     x_values = x
-                    x_array = x.values
+                    x_array = x.full_values
                 elif isinstance(x, Trace):
                     x_values = x.y
                     x_array = x.y
@@ -1541,6 +1640,9 @@ class H5File:
         xscale: str = "linear",
         yscale: str = "linear",
         y2scale: str = "linear",
+        xlim=None,
+        ylim=None,
+        y2lim=None,
         legend: bool = True,
         legend_location: str = "best",
         grid: bool = True,
@@ -1554,11 +1656,9 @@ class H5File:
         """Plot HDF5 datasets and/or ``Trace`` objects.
 
         ``y`` selects one or more left-axis traces, while ``y2`` selects optional
-        right-axis traces. Dataset selectors can be absolute paths, paths
-        relative to the current root, or unique short names. Trace roles control
-        default line style for data, limits, references, and command traces. The
-        function returns the Matplotlib figure and axes so callers can add custom
-        annotations before showing or saving.
+        right-axis traces. ``xlim``, ``ylim``, and ``y2lim`` change only the
+        displayed figure range; they do not modify trace data. The function
+        returns the Matplotlib figure and axes for further customization.
         """
 
         theme = check_theme(theme)
@@ -1569,12 +1669,14 @@ class H5File:
         with h5py.File(self.filename, "r") if self.filename else nullcontext(None) as h5:
             x_array = None
             x_name = None
+            x_time_axis = None
 
             if x is not None:
                 if isinstance(x, Trace):
                     x_array = x.y
                     x_name = x.name
                 elif isinstance(x, TimeAxis):
+                    x_time_axis = x
                     x_array = x.values
                     x_name = x.name
                 else:
@@ -1619,8 +1721,16 @@ class H5File:
 
         if not all_series:
             raise PlotDataError("No y data was selected.")
+        if y2lim is not None and not right_series:
+            raise PlotDataError("y2lim requires y2 data.")
 
         dataset_series = [series for series in all_series if series.x is None]
+
+        if x_time_axis is not None:
+            for series in dataset_series:
+                if series.length == x_time_axis.raw_count:
+                    series.data = series.data[x_time_axis.selection]
+                    series.length = len(series.data)
 
         if x_array is None and dataset_series:
             x_length = dataset_series[0].length
@@ -1710,6 +1820,13 @@ class H5File:
             yscale=yscale,
             y2scale=y2scale,
         )
+
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+        if y2lim is not None:
+            ax2.set_ylim(y2lim)
 
         if grid:
             ax.grid(True, **grid_kwargs(theme))
