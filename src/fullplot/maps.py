@@ -69,6 +69,21 @@ class Axis:
     units: str = ""
     spacing: str = "values"
 
+    def __str__(self) -> str:
+        """Return a compact summary of the map axis."""
+        values = np.asarray(self.values)
+        if values.ndim != 1 or values.size == 0:
+            value_summary = f"shape={values.shape}"
+        else:
+            units = f" {self.units}" if self.units else ""
+            point_label = "point" if values.size == 1 else "points"
+            value_summary = (
+                f"{values.size} {point_label}, {values[0]:g} to {values[-1]:g}{units}"
+            )
+        return (
+            f"Axis({self.name!r}, {value_summary}, spacing={self.spacing!r})"
+        )
+
     @classmethod
     def linear(
         cls,

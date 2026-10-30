@@ -414,6 +414,20 @@ class TimeAxis:
     def __getitem__(self, item):
         return self.values[item]
 
+    def __str__(self) -> str:
+        """Return a compact summary of the active time range."""
+        active_label = "sample" if self.count == 1 else "samples"
+        window = ""
+        if self.has_window:
+            start, stop = self.window_range
+            start_text = "start" if start is None else f"{start:g}"
+            stop_text = "end" if stop is None else f"{stop:g}"
+            window = f", window={start_text} to {stop_text}"
+        return (
+            f"TimeAxis({self.name!r}, {self.count}/{self.raw_count} {active_label}, "
+            f"range={self.tmin:g} to {self.tmax:g}, zero={self.zero:g}{window})"
+        )
+
 class Trace:
     """Prepared one-dimensional engineering data series.
 
@@ -489,6 +503,17 @@ class Trace:
         self.name = str(name)
         self.role = _normalize_trace_role(role)
         self.attrs = {} if attrs is None else dict(attrs)
+
+    def __str__(self) -> str:
+        """Return a compact summary without printing the underlying arrays."""
+        finite_count = int(np.count_nonzero(self.finite))
+        count = len(self.x)
+        sample_label = "sample" if count == 1 else "samples"
+        return (
+            f"Trace({self.name!r}, role={self.role!r}, {count} {sample_label}, "
+            f"x={self.tmin:g} to {self.tmax:g}, "
+            f"finite={finite_count}/{count})"
+        )
 
     @property
     def x(self) -> np.ndarray:
@@ -1313,6 +1338,10 @@ class H5File:
     def __post_init__(self):
         self.filename = str(self.filename)
         self.root = _clean_root(self.root)
+
+    def __str__(self) -> str:
+        """Return the selected file and HDF5 root."""
+        return f"H5File({self.filename!r}, root={self.root!r})"
 
     def at(self, group: str) -> "H5File":
         """

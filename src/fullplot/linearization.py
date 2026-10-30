@@ -40,6 +40,29 @@ class Linearization:
     network: str
     path: str
 
+    def __str__(self) -> str:
+        """Return a compact summary suitable for interactive printing."""
+        nx = len(self.states)
+        nu = len(self.inputs)
+        ny = len(self.outputs)
+        identity = " / ".join(
+            item for item in (self.network, self.solver, self.run) if item
+        )
+        title = "Linearization" if not identity else f"Linearization: {identity}"
+        dimensions = ", ".join((
+            f"{nx} state{'s' if nx != 1 else ''}",
+            f"{nu} input{'s' if nu != 1 else ''}",
+            f"{ny} output{'s' if ny != 1 else ''}",
+        ))
+        return "\n".join((
+            title,
+            f"  Time: {self.time:g} s",
+            f"  Dimensions: {dimensions}",
+            f"  Matrices: A{self.A.shape}, B{self.B.shape}, "
+            f"C{self.C.shape}, D{self.D.shape}",
+            f"  Path: {self.path}",
+        ))
+
 
 def _decode(value: Any) -> Any:
     if isinstance(value, bytes):
