@@ -12,17 +12,17 @@ FullPlot does not simulate physical systems, solve differential equations, or ca
 
 ## Installation
 
-```bash
-pip install fullplot
-```
-
-Or with `uv`:
+Install FullPlot from PyPI:
 
 ```bash
-uv add fullplot
+pip3 install fullplot
 ```
 
-FullPlot requires Python 3.11 or newer and uses NumPy, SciPy, h5py, and Matplotlib. It supports both `.h5` and `.hdf5` input files.
+To set up FullPlot for the repository examples, use:
+
+```bash
+pip3 install "fullplot[examples]"
+```
 
 ## Quick start
 
@@ -77,9 +77,9 @@ fplt.tree("results.h5", max_depth=3)
 values = fplt.read("results.h5", "time", root="/Network/transient/runs/base")
 ```
 
-## Reading FullFlow linearizations (new in 2.0.0)
+## Reading FullFlow linearizations
 
-FullPlot 2.0.0 can read **already calculated** FullFlow steady-state and transient linearization records. The result is a labeled `Linearization` object containing the state-space matrices and the operating point at which they were computed.
+FullPlot can read **previously calculated** FullFlow steady-state and transient linearization records. The result is a labeled `Linearization` object containing the state-space matrices and the operating point at which they were computed.
 
 A continuous-time linear model takes the form
 
@@ -245,7 +245,7 @@ xdot = linear.xdot0 + linear.A @ dx + linear.B @ du
 y = linear.y0 + linear.C @ dx + linear.D @ du
 ```
 
-These are **local predictions**, not a substitute for the nonlinear model away from the operating point. FullPlot 2.0.0 does not compute eigenvalues, tune controllers, integrate state-space models, draw linearization heat maps, or expose matrix coefficients as traces. Such features can be added later without changing the HDF5 reader API.
+These are **local predictions**, not a substitute for the nonlinear model away from the operating point. FullPlot reads the saved arrays; it does not provide built-in eigenvalue analysis, controller tuning, state-space integration, linearization heat maps, or matrix-coefficient trace extraction.
 
 ### FullFlow HDF5 format
 
@@ -404,7 +404,7 @@ maps.map(
 )
 ```
 
-You can also use `plot()` with `slice=` and `axis=` to reduce multidimensional data to one-dimensional traces. See `examples/hdf5_plotting/` for how physical x/y coordinates, nearest-value selections, and slice dimensions are handled. Matrix heatmaps for `Linearization` objects are not part of the 2.0.0 linearization reader.
+You can also use `plot()` with `slice=` and `axis=` to reduce multidimensional data to one-dimensional traces. See `examples/hdf5_plotting/` for how physical x/y coordinates, nearest-value selections, and slice dimensions are handled. Linearization matrices can be read as NumPy arrays, but the `Linearization` object does not provide a dedicated heat-map method.
 
 ## Generated maps and interpolation grids
 
@@ -472,8 +472,8 @@ FullPlot offers light and dark plot themes. Labels and units are carried through
 - Model-option metadata and diagnostic values are read when present; missing optional groups become empty dictionaries.
 - Saved linearization times must already exist in the file. FullPlot does not interpolate matrices between operating points.
 - Different operating points can have different state/input/output selections, so the reader never assumes compatible matrix sizes.
-- Only the existing FullFlow per-point HDF5 linearization layout is supported in 2.0.0. Reading older or incompatible formats requires conversion.
-- Linearization `.plot()` and `.trace()` APIs are intentionally deferred. The `Linearization` object exposes NumPy arrays that users can analyze or plot with their own tools.
+- The linearization reader supports FullFlow's per-run and per-point HDF5 layout. Files with incompatible layouts require conversion.
+- The `Linearization` object does not provide `.plot()` or `.trace()` methods. Its NumPy arrays can be inspected, analyzed, or passed to plotting tools directly.
 
 ## License
 

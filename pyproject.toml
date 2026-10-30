@@ -41,6 +41,9 @@ dependencies = [
     "matplotlib>=3.8.0",
 ]
 
+[project.optional-dependencies]
+examples = []
+
 [project.urls]
 Homepage = "https://github.com/saakethramoju/FullPlot"
 Repository = "https://github.com/saakethramoju/FullPlot"
