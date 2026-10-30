@@ -1,25 +1,16 @@
-"""FullPlot public package interface.
-
-FullPlot is a small engineering-data plotting package centered on HDF5 files,
-reusable one-dimensional ``Trace`` objects, shared ``TimeAxis`` objects, and
-rectangular-grid map generation. Most users import the package as ``fullplot``
-or ``fplt`` and use the names re-exported here instead of importing from the
-internal modules directly.
-"""
+"""FullPlot public package interface."""
 
 from fullplot.cli import main
 from fullplot.fullplot import (
     AmbiguousDatasetError,
     DatasetNotFoundError,
     FullPlotError,
-    H5File,
     PlotDataError,
     TimeAxis,
     Trace,
     VALID_TRACE_ROLES,
     list,
     map,
-    open,
     plot,
     read,
     show,
@@ -29,6 +20,7 @@ from fullplot.fullplot import (
     values,
     write_traces,
 )
+from fullplot.linearization import H5File, Linearization, LinearizationError, open
 from fullplot.maps import (
     Axis,
     FullPlotMapError,
@@ -37,7 +29,7 @@ from fullplot.maps import (
     generate_map,
 )
 
-__version__ = "0.1.1"
+__version__ = "2.0.0"
 
 __all__ = [
     "__version__",
@@ -45,6 +37,8 @@ __all__ = [
     "DatasetNotFoundError",
     "AmbiguousDatasetError",
     "PlotDataError",
+    "LinearizationError",
+    "Linearization",
     "TimeAxis",
     "Trace",
     "VALID_TRACE_ROLES",

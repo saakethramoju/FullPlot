@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0
+
+### Added
+
+* Added `H5File.linearization()` to read previously saved FullFlow steady-state and transient state-space results without installing or running FullFlow.
+* Added `H5File.linearizations()` to discover available networks, solver runs, base operating points, and saved transient point times.
+* Added the public `Linearization` data class with `A`, `B`, `C`, `D`, baseline vectors, state/input/output labels, operating time, diagnostics, model-option metadata, and source identifiers.
+* Added single-time and multiple-time transient selection through `time=` and `times=`. Multiple times return a dictionary keyed by requested time.
+
 ## 0.1.1
 
 ### Added

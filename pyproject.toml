@@ -1,7 +1,7 @@
 [project]
 name = "fullplot"
-version = "0.1.1"
-description = "A documented HDF5 plotting, trace-processing, and map-generation package for engineering simulation and test data."
+version = "2.0.0"
+description = "HDF5 plotting, trace processing, linearization reading, and map generation for engineering data."
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]
@@ -15,6 +15,8 @@ keywords = [
     "engineering",
     "simulation",
     "test-data",
+    "linearization",
+    "state-space",
     "map-generation",
     "scientific-computing",
 ]
